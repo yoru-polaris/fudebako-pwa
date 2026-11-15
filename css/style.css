@@ -100,3 +100,4 @@ textarea.big { min-height: 40dvh; }
 @media (min-width: 800px) {
   #messages, #composer { padding-left: max(14px, calc(50vw - 380px)); padding-right: max(14px, calc(50vw - 380px)); }
 }
+#modelChip { flex-shrink: 0; max-width: 60%; }
