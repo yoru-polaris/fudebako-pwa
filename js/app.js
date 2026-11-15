@@ -371,6 +371,46 @@ function openNote() {
   show('#sheet');
 }
 
+// 枝分かれの全体図。一本道の区間を1行にまとめ、分岐するたびに一段下げて表示する。
+function openTree() {
+  $('#sheetTitle').textContent = '分岐ツリー';
+  const onPath = new Set(pathTo(S.chat.leafId).map((m) => m.id));
+  const rows = [];
+  const walk = (start, depth) => {
+    let node = start;
+    let count = 1;
+    for (;;) {
+      const kids = childrenOf(node.id);
+      if (kids.length !== 1) {
+        rows.push({ start, last: node, count, depth, kids });
+        kids.forEach((k) => walk(k, depth + 1));
+        return;
+      }
+      node = kids[0];
+      count++;
+    }
+  };
+  childrenOf(null).forEach((root) => walk(root, 0));
+
+  const jump = (row) => {
+    if (!onPath.has(row.last.id)) S.chat.leafId = deepest(row.last.id);
+    S.error = '';
+    closePanels();
+    saveChat();
+    $(`#messages [data-id="${row.start.id}"]`)?.scrollIntoView({ block: 'start' });
+  };
+  const leaves = rows.filter((r) => !r.kids.length).length;
+  $('#sheetBody').replaceChildren(
+    h('p', { class: 'hint', text: rows.length ? `全部で ${S.msgs.size} 件、枝の先は ${leaves} 本あります。行をタップするとその枝に切り替わります。` : 'まだメッセージがありません。' }),
+    ...rows.map((r) => h('div', { class: `treerow ${onPath.has(r.start.id) ? 'on' : ''}`, style: `margin-left:${Math.min(r.depth, 8) * 14}px` },
+      h('button', { class: 'plain', onclick: () => jump(r) },
+        h('div', { class: 't', text: `${r.start.role === 'user' ? '🧑' : '🤖'} ${expandImages(r.start.text).replace(IMG_URL, '🖼').replace(/\s+/g, ' ').slice(0, 60) || '（添付のみ）'}` }),
+        h('div', { class: 'd', text: `${r.count} 件${r.kids.length ? `　→ ここから ${r.kids.length} つに分岐` : '　・枝の先'}${onPath.has(r.last.id) && !r.kids.length ? '　✔ 今ここ' : ''}　${stamp(r.last.createdAt)}` })),
+      h('button', { class: 'iconbtn', text: '🗑', 'aria-label': 'この枝を削除', onclick: async () => { await removeMessage(r.start); if (!$('#sheet').hidden) openTree(); } }))),
+  );
+  show('#sheet');
+}
+
 function saveText(list) {
   const name = `${(S.chat.title || 'チャット').replace(/[\\/:*?"<>|\n]/g, '_')}.txt`;
   closePanels();
@@ -396,6 +436,7 @@ function openChatMenu() {
       closePanels();
     }),
     item(`📖 今回の話${S.chat.note?.trim() ? '（設定あり）' : ''}`, openNote),
+    item('🌳 分岐ツリー', openTree),
     item('▸ すべてたたむ', () => foldAll(true)),
     item('▾ すべてひらく', () => foldAll(false)),
     item('📋 全文をコピー（今見えている枝）', () => copy(path)),
@@ -867,6 +908,48 @@ function promptCard(p) {
   return card;
 }
 
+const TIDY_PROMPT = `あなたは編集者です。ユーザーが渡すロールプレイ用の設定文を、内容を変えずに整理して、次のJSONだけを出力してください。前置きや説明、コードブロックの記号は書かないでください。
+
+{"name": "人物の名前", "core": "...", "detail": "...", "keywords": ["..."], "greeting": "..."}
+
+- core: 毎回読み込む要点。名前、外見、一人称や口調、性格、相手との関係、必ず守るルールを、箇条書きで800字以内にまとめる。
+- detail: core に入らなかった細かい設定すべて。背景、世界観、隠し設定、台詞の例、展開の案など。情報を削らない。
+- keywords: この人物を指す呼び名（名前、愛称、肩書き）の配列。
+- greeting: 冒頭の場面（イントロ、最初のメッセージ）があれば一字一句そのまま。なければ空文字。
+- 同じ内容が重複している箇所は1つにまとめる。
+- 設定の中身や表現を言い換えたり、和らげたり、付け足したりしない。`;
+
+async function tidyCard(c, btn) {
+  const source = [c.core, c.detail, c.greeting && `【イントロ】\n${c.greeting}`].filter(Boolean).join('\n\n');
+  if (!source.trim()) { alert('先に設定文を貼り付けてください。'); return; }
+  if (!confirm(`今選んでいるモデル（${modelLabel(activeConn())}）に設定文を送り、整理したカードを新しく作ります。\n元のカードはそのまま残ります。`)) return;
+  btn.disabled = true;
+  btn.textContent = '整理中…（1分ほどかかることがあります）';
+  try {
+    let out = '';
+    for await (const ev of streamChat({ ...activeConn(), tailUser: '', tailModel: '' }, { system: TIDY_PROMPT, messages: [{ role: 'user', text: source }] })) {
+      if (ev.text) out += ev.text;
+      if (ev.notice && !out) throw new Error(ev.notice);
+    }
+    const json = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1));
+    const made = {
+      id: uid(), type: c.type || 'char', createdAt: Date.now(),
+      name: `${json.name || c.name}（整理版）`,
+      core: String(json.core || ''), detail: String(json.detail || ''),
+      keywords: [].concat(json.keywords || []).join('、'), greeting: String(json.greeting || c.greeting || ''),
+    };
+    S.chars.push(made);
+    S.openCard = made.id;
+    await db.put('chars', made);
+    renderSettings();
+    toast('整理したカードを作りました');
+  } catch (e) {
+    alert(`整理できませんでした。\n${e instanceof SyntaxError ? 'AIの返事が決まった形になっていませんでした。もう一度試すか、別のモデルで試してください。' : e.message}`);
+    btn.disabled = false;
+    btn.textContent = '✨ AIに整理してもらう';
+  }
+}
+
 function charCard(c) {
   const save = () => db.put('chars', c);
   const type = c.type || 'char';
@@ -890,7 +973,9 @@ function charCard(c) {
         h('button', { text: c.bg ? '画像を変える' : '画像を選ぶ', onclick: () => bgPick.click() }),
         c.bg && h('button', { class: 'danger', text: 'やめる', onclick: async () => { delete c.bg; await save(); applyBg(); renderSettings(); } }),
         bgPick)),
-    h('div', { class: 'btnrow' }, h('button', { class: 'danger', text: '削除', onclick: async () => {
+    h('div', { class: 'btnrow' },
+      type === 'char' && h('button', { text: '✨ AIに整理してもらう', onclick: (e) => tidyCard(c, e.currentTarget) }),
+      h('button', { class: 'danger', text: '削除', onclick: async () => {
       if (!confirm(`「${c.name}」を削除しますか？`)) return;
       S.chars = S.chars.filter((x) => x !== c);
       await db.del('chars', c.id);
