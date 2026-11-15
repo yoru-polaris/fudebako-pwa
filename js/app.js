@@ -21,7 +21,7 @@ function h(tag, props = {}, ...kids) {
 const S = {
   settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null, lastCharIds: [],
     ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false,
-      scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
+      replaceUser: true, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
   prompts: [],
   chars: [],
   chats: [],
@@ -72,6 +72,19 @@ function newConn() {
 const CHAR_TYPES = { char: '登場人物', hero: '主人公（自分が演じる・語る人物）', world: '世界設定', doc: '資料（まるごと読み込む）' };
 const chatChars = (chat) => (chat.charIds || []).map((id) => S.chars.find((c) => c.id === id)).filter(Boolean);
 
+// {{user}} {{char}} と、単独の「User」を、選んでいる主人公・登場人物の名前に置き換える
+function fillNames(chat, text) {
+  const chars = chatChars(chat);
+  const hero = chars.find((c) => c.type === 'hero')?.name;
+  const cast = chars.find((c) => (c.type || 'char') === 'char')?.name;
+  if (cast) text = text.replace(/\{\{char\}\}/gi, cast);
+  if (hero) {
+    text = text.replace(/\{\{user\}\}/gi, hero);
+    if (S.settings.ui.replaceUser) text = text.replace(/(?<![A-Za-z])User(?![A-Za-z])/g, hero);
+  }
+  return text;
+}
+
 // プロンプトとキャラ表から、AIに渡すシステムプロンプトを組み立てる。
 // 「詳細」は、直近の会話に名前かキーワードが出たキャラの分だけ入れる。
 function buildSystem(chat, recentText) {
@@ -92,7 +105,7 @@ function buildSystem(chat, recentText) {
     if (list.length) parts.push(`${title}\n\n${list.map(block).join('\n\n')}`);
   }
   if (chat.note?.trim()) parts.push(`# 今回の話\n\n${chat.note.trim()}`);
-  return { system: parts.filter(Boolean).join('\n\n'), loaded };
+  return { system: fillNames(chat, parts.filter(Boolean).join('\n\n')), loaded };
 }
 
 function blankChat() {
@@ -394,7 +407,7 @@ function openChatMenu() {
 }
 
 async function startWith(c) {
-  const m = { id: uid(), chatId: S.chat.id, parentId: null, role: 'assistant', text: c.greeting.trim(), createdAt: Date.now() };
+  const m = { id: uid(), chatId: S.chat.id, parentId: null, role: 'assistant', text: fillNames(S.chat, c.greeting.trim()), createdAt: Date.now() };
   S.msgs.set(m.id, m);
   S.chat.leafId = m.id;
   if (!S.chat.title) S.chat.title = c.name;
@@ -868,10 +881,10 @@ function charCard(c) {
     field('種類', select(c, 'type', CHAR_TYPES, () => { save(); renderSettings(); })),
     simple
       ? field(type === 'doc' ? '本文' : '設定', bound(c, 'core', save, { class: 'big', placeholder: type === 'doc' ? '設定資料やこれまでの本文などを、そのまま貼り付けます。' : '年齢、容姿、性格、立場など。話によって主人公を変えたいときは、カードを複数作って切り替えます。' }, 'textarea'), `これを選んだチャットで、毎回まるごとAIに渡されます。${type === 'doc' ? `（今 ${(c.core || '').length.toLocaleString()} 文字）` : ''}`)
-      : field(type === 'world' ? '基本（いつも読み込む）' : '核（いつも読み込む）', bound(c, 'core', save, { placeholder: type === 'world' ? '世界のあらまし、時代、決まりごとなど。短くまとめます。' : '性格、口調、一人称、外見など。短くまとめます。' }, 'textarea'), 'このチャットで使うと決めたら、毎回AIに渡されます。'),
+      : field(type === 'world' ? '基本（いつも読み込む）' : '核（いつも読み込む）', bound(c, 'core', save, { class: 'big', placeholder: type === 'world' ? '世界のあらまし、時代、決まりごとなど。短くまとめます。' : '性格、口調、一人称、外見など。他のアプリ用に書いた設定文を、そのまままるごと貼り付けても大丈夫です。' }, 'textarea'), 'このチャットで使うと決めたら、毎回AIに渡されます。'),
     !simple && field(type === 'world' ? '詳細（キーワードが出たときだけ読み込む）' : '詳細（名前が出たときだけ読み込む）', bound(c, 'detail', save, { class: 'big', placeholder: type === 'world' ? '地名、組織、用語、歴史など。長くても大丈夫です。' : '過去、人間関係、細かい設定、台詞の例など。長くても大丈夫です。' }, 'textarea'), '直近4つのメッセージに、名前か下のキーワードが出てきたときだけAIに渡されます。'),
     !simple && field('キーワード（「、」で区切る）', bound(c, 'keywords', save, { type: 'text', placeholder: type === 'world' ? '例: 王都、騎士団、魔法学院' : '例: ひよ、日和、先輩' })),
-    type === 'char' && field('始まり方（最初のメッセージ）', bound(c, 'greeting', save, { placeholder: '新しいチャットでこの人物を選ぶと、「この始まり方で始める」ボタンが出ます。空欄なら出ません。' }, 'textarea')),
+    type === 'char' && field('始まり方（最初のメッセージ）', bound(c, 'greeting', save, { class: 'big', placeholder: '新しいチャットでこの人物を選ぶと、「この始まり方で始める」ボタンが出ます。空欄なら出ません。' }, 'textarea')),
     type === 'char' && h('div', { class: 'f' }, '背景画像（この人物を使うチャットの背景）',
       h('div', { class: 'btnrow' },
         h('button', { text: c.bg ? '画像を変える' : '画像を選ぶ', onclick: () => bgPick.click() }),
@@ -1024,6 +1037,7 @@ function renderSettings() {
         field('拡張子', bound(ui, 'imgExt', save, { type: 'text', placeholder: '.avif', autocapitalize: 'off' }))),
       h('div', { class: 'card' },
         h('strong', { text: '操作' }),
+        check('replaceUser', '設定文の「User」を主人公の名前に置き換える', '主人公を選んでいるチャットで、キャラ設定や始まり方に書かれた「User」「{{user}}」を主人公の名前に変えてからAIに渡します。'),
         check('scrollbar', '右端にスクロールバーを表示する', '指でつまんで動かすと、長い会話をすばやく移動できます。'),
         field('「続き」ボタンでAIに送る指示', bound(ui, 'continueText', save, { type: 'text' }), '最後の返事の下の「続き」を押すと、この文章をこっそり送って続きを書かせます。画面には残りません。'),
         check('autoScroll', '返事が届いている間、自動で下へスクロールする'),
