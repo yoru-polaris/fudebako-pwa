@@ -28,6 +28,7 @@ const S = {
   chat: null,
   msgs: new Map(),
   busy: false,
+  pending: [],
   abort: null,
   error: '',
   editing: null,
@@ -227,6 +228,9 @@ function messageEl(m) {
   } else {
     if (m.thought) bubble.append(h('details', { class: 'thought' }, h('summary', { text: '思考' }), h('div', { text: m.thought })));
     bubble.append(h('div', { class: 'body' }, richText(m.text)));
+    if (m.files?.length) bubble.append(h('div', { class: 'files' }, m.files.map((f) => f.kind === 'image'
+      ? h('img', { src: `data:${f.mime};base64,${f.data}`, alt: f.name })
+      : h('span', { class: 'filechip', text: `📎 ${f.name}` }))));
     if (m.notice) bubble.append(h('div', { class: 'hint', text: `※ ${m.notice}` }));
     if (m.loaded?.length) bubble.append(h('div', { class: 'hint', text: `📖 詳細を読み込み: ${m.loaded.join('、')}` }));
   }
@@ -258,7 +262,7 @@ function messageEl(m) {
 
 function render() {
   $('#chatTitle').textContent = S.chat.title || '新しいチャット';
-  $('#promptChip').textContent = `📝 ${promptOf(S.chat.promptId)?.name || 'プロンプトなし'}`;
+  $('#promptChip').textContent = `📝 ${promptOf(S.chat.promptId)?.name || 'なし'}`;
   $('#modelChip').textContent = modelLabel(activeConn());
   $('#charChip').textContent = `👤 ${chatChars(S.chat).length}`;
   $('#btnImages').classList.toggle('off', !S.settings.showImages);
@@ -399,12 +403,45 @@ async function startWith(c) {
 }
 
 // ---------- 会話の操作 ----------
+// 保存してあるメッセージを、APIに送る形にする（テキスト添付は本文に足し、画像は別に渡す）
+function apiMessage(m) {
+  const texts = (m.files || []).filter((f) => f.kind === 'text').map((f) => `【添付ファイル: ${f.name}】\n${f.text}`);
+  return {
+    role: m.role,
+    text: [m.text, ...texts].filter(Boolean).join('\n\n'),
+    images: (m.files || []).filter((f) => f.kind === 'image').map((f) => ({ mime: f.mime, data: f.data })),
+  };
+}
+
+function renderPending() {
+  const box = $('#pending');
+  box.hidden = !S.pending.length;
+  box.replaceChildren(...S.pending.map((f) => h('button', { text: `${f.kind === 'image' ? '🖼' : '📎'} ${f.name} ✕`, onclick: () => { S.pending = S.pending.filter((x) => x !== f); renderPending(); } })));
+  updateBar();
+}
+
+async function addFiles(files) {
+  for (const f of files) {
+    try {
+      if (f.type.startsWith('image/')) {
+        const url = await toDataUrl(await shrinkImage(f));
+        S.pending.push({ kind: 'image', name: f.name, mime: 'image/jpeg', data: url.slice(url.indexOf(',') + 1) });
+      } else {
+        S.pending.push({ kind: 'text', name: f.name, text: await f.text() });
+      }
+    } catch (e) {
+      alert(`「${f.name}」を読み込めませんでした。\n${e.message}`);
+    }
+  }
+  renderPending();
+}
+
 const continueFrom = (m) => generate(m.id, { extraUser: S.settings.ui.continueText.trim() || '続きを書いてください。' });
 
 async function generate(parentId, opts = {}) {
   if (S.busy) return;
   const conn = activeConn();
-  const history = pathTo(parentId).map(({ role, text }) => ({ role, text }));
+  const history = pathTo(parentId).map(apiMessage);
   const { system, loaded } = buildSystem(S.chat, history.slice(-4).map((x) => x.text).join('\n'));
   if (opts.extraUser) history.push({ role: 'user', text: opts.extraUser });
   if (conn?.tailUser?.trim()) history.push({ role: 'user', text: conn.tailUser });
@@ -472,15 +509,16 @@ async function send() {
   const input = $('#input');
   const text = input.value.trim();
   const leaf = S.msgs.get(S.chat.leafId);
-  if (!text) {
+  if (!text && !S.pending.length) {
     if (leaf?.role === 'user') generate(leaf.id);
     else if (leaf) continueFrom(leaf);
     return;
   }
   const m = { id: uid(), chatId: S.chat.id, parentId: S.chat.leafId ?? null, role: 'user', text, createdAt: Date.now() };
+  if (S.pending.length) { m.files = S.pending; S.pending = []; renderPending(); }
   S.msgs.set(m.id, m);
   S.chat.leafId = m.id;
-  if (!S.chat.title) S.chat.title = text.replace(/\s+/g, ' ').slice(0, 24);
+  if (!S.chat.title) S.chat.title = (text || m.files[0].name).replace(/\s+/g, ' ').slice(0, 24);
   input.value = '';
   resizeInput();
   await Promise.all([db.put('messages', m), saveChat()]);
@@ -504,6 +542,7 @@ async function saveEdit(m, text, asBranch) {
     return;
   }
   const copy = { id: uid(), chatId: m.chatId, parentId: m.parentId, role: m.role, text, createdAt: Date.now() };
+  if (m.files) copy.files = m.files;
   S.msgs.set(copy.id, copy);
   S.chat.leafId = copy.id;
   await Promise.all([db.put('messages', copy), saveChat()]);
@@ -1081,6 +1120,10 @@ $('#messages').addEventListener('scroll', () => {
   $('#btnBottom').hidden = box.scrollHeight - box.scrollTop - box.clientHeight < 300;
   $('#btnTop').hidden = box.scrollTop < 300;
 }, { passive: true });
+$('#btnAttach').addEventListener('click', () => {
+  const el = h('input', { type: 'file', accept: 'image/*,.txt,.md,text/plain,text/markdown', multiple: true, onchange: () => addFiles(el.files) });
+  el.click();
+});
 $('#btnDrawer').addEventListener('click', openDrawer);
 $('#chatSearch').addEventListener('input', (e) => searchChats(e.target.value));
 $('#btnNewChat').addEventListener('click', async () => { await openChat(blankChat()); closePanels(); });

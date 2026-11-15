@@ -99,7 +99,7 @@ async function* gemini(conn, { system, messages, signal }) {
   const body = {
     contents: messages.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.text }],
+      parts: [...(m.text ? [{ text: m.text }] : []), ...m.images.map((i) => ({ inlineData: { mimeType: i.mime, data: i.data } }))],
     })),
     generationConfig,
   };
@@ -133,7 +133,12 @@ async function* openai(conn, { system, messages, signal }) {
     stream: true,
     messages: [
       ...(system ? [{ role: 'system', content: system }] : []),
-      ...messages.map((m) => ({ role: m.role, content: m.text })),
+      ...messages.map((m) => ({
+        role: m.role,
+        content: m.images.length
+          ? [...(m.text ? [{ type: 'text', text: m.text }] : []), ...m.images.map((i) => ({ type: 'image_url', image_url: { url: `data:${i.mime};base64,${i.data}` } }))]
+          : m.text,
+      })),
     ],
   };
   if (num(conn.temperature) !== undefined) body.temperature = num(conn.temperature);
@@ -168,10 +173,12 @@ export function streamChat(conn, req) {
   if (!conn) throw new Error('接続先がありません。⚙ 設定 →「接続先」で追加してください。');
   const merged = [];
   for (const m of req.messages) {
-    if (!m.text) continue;
+    if (!m.text && !m.images?.length) continue;
     const prev = merged.at(-1);
-    if (prev?.role === m.role) prev.text += `\n\n${m.text}`;
-    else merged.push({ role: m.role, text: m.text });
+    if (prev?.role === m.role) {
+      prev.text = [prev.text, m.text].filter(Boolean).join('\n\n');
+      prev.images = [...prev.images, ...(m.images || [])];
+    } else merged.push({ role: m.role, text: m.text || '', images: [...(m.images || [])] });
   }
   req = { ...req, messages: merged };
   if (conn.type === 'dummy') return dummy(conn, req);
