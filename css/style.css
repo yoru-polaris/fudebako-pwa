@@ -1,15 +1,32 @@
 :root {
   --bg: #f6f4ef; --panel: #ffffff; --text: #1f2023; --sub: #6b6d75;
   --line: #dcd8cf; --accent: #3b6ea5; --accent-text: #fff;
-  --bubble: #dfe9f5; --danger: #b3261e; --field: #fff;
-  color-scheme: light dark;
+  --bubble: #dfe9f5; --danger: #b3261e; --field: #fff; --msg-size: 16px;
+  color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #17181b; --panel: #212327; --text: #e8e6e1; --sub: #9a9ca5;
     --line: #34373d; --accent: #7fb0e6; --accent-text: #10151c;
-    --bubble: #2b3a4d; --danger: #f2877f; --field: #17181b;
+    --bubble: #2b3a4d; --danger: #f2877f; --field: #17181b; color-scheme: dark;
   }
+}
+[data-theme=sumi] {
+  --bg: #17181b; --panel: #212327; --text: #e8e6e1; --sub: #9a9ca5;
+  --line: #34373d; --accent: #7fb0e6; --accent-text: #10151c;
+  --bubble: #2b3a4d; --danger: #f2877f; --field: #17181b; color-scheme: dark;
+}
+[data-theme=sakura] { --bg: #fbf3f4; --text: #3a2a2e; --sub: #8a6f76; --line: #ecd5da; --accent: #b8506c; --bubble: #f8dfe5; }
+[data-theme=sora] { --bg: #f1f6fa; --text: #1f2a33; --sub: #66788a; --line: #d3e0ea; --accent: #2a74aa; --bubble: #d9eaf6; }
+[data-theme=wakakusa] { --bg: #f4f7ef; --text: #26301f; --sub: #6d7a60; --line: #d7e0c9; --accent: #4f7a30; --bubble: #e1eccf; }
+[data-theme=sepia] { --bg: #f3ead8; --panel: #fbf5e8; --text: #3b2f20; --sub: #7d6b52; --line: #dccdb0; --accent: #8a5c24; --bubble: #ead9b8; --field: #fffaf0; }
+[data-theme=aiyo] {
+  --bg: #121a2b; --panel: #1b2540; --text: #e3e8f2; --sub: #93a0b8; --line: #2c3a5c; --accent: #8fb4f0;
+  --accent-text: #0e1626; --bubble: #26365c; --danger: #f2877f; --field: #121a2b; color-scheme: dark;
+}
+[data-theme=azuki] {
+  --bg: #1f1719; --panel: #2b2023; --text: #efe4e2; --sub: #ac9896; --line: #43333a; --accent: #e09aa8;
+  --accent-text: #2a1418; --bubble: #4a2c36; --danger: #f2877f; --field: #1f1719; color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
@@ -37,7 +54,7 @@ button:disabled { opacity: .5; }
 #messages { flex: 1; overflow-y: auto; padding: 14px 14px 24px; -webkit-overflow-scrolling: touch; }
 .empty { color: var(--sub); text-align: center; margin-top: 30vh; font-size: 14px; }
 .msg { margin: 0 0 18px; }
-.msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg .body { font-size: var(--msg-size); white-space: pre-wrap; overflow-wrap: anywhere; }
 .bubble { border-radius: 14px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); }
 .msg.user .bubble { background: var(--bubble); border-color: transparent; margin-left: 12%; }
 .bubble.folded { cursor: pointer; }
@@ -55,7 +72,7 @@ details.thought div { white-space: pre-wrap; }
 .errbox { border: 1px solid var(--danger); color: var(--danger); border-radius: 10px; padding: 10px 12px;
   white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; margin-bottom: 18px; }
 
-#composer { display: flex; gap: 8px; align-items: flex-end; padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+#composer { position: relative; display: flex; gap: 8px; align-items: flex-end; padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line); background: var(--panel); }
 textarea, input[type=text], input[type=password], input[type=number], select {
   background: var(--field); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; width: 100%; }
@@ -101,3 +118,10 @@ textarea.big { min-height: 40dvh; }
   #messages, #composer { padding-left: max(14px, calc(50vw - 380px)); padding-right: max(14px, calc(50vw - 380px)); }
 }
 #modelChip { flex-shrink: 0; max-width: 60%; }
+#btnBottom { position: absolute; right: 12px; top: -52px; width: 42px; height: 42px; border-radius: 50%; padding: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25); color: var(--sub); }
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-top: 6px; }
+.swatch { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; font-size: 13px; }
+.swatch.on { border: 2px solid var(--accent); font-weight: 700; }
+.swatch i { display: block; width: 100%; height: 28px; border-radius: 6px; border: 1px solid rgba(128,128,128,.4); }
+#tabs button { font-size: 15px; }

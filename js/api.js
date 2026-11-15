@@ -4,6 +4,7 @@ export const CONN_TYPES = {
   vertex: 'Vertex AI（APIキー）',
   gemini: 'Gemini（Google AI Studio）',
   openai: 'OpenAI互換（OpenRouterなど）',
+  dummy: 'ダミーAI（動作確認用・通信しません）',
 };
 
 export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
@@ -153,8 +154,19 @@ async function* openai(conn, { system, messages, signal }) {
   }
 }
 
+async function* dummy(conn, { messages, signal }) {
+  const last = messages.at(-1)?.text || '';
+  const text = conn.dummyText?.trim() || `これはダミーAIの返事です。通信はしていません。\n\n受け取った文章（${messages.length}件目）:\n${last}`;
+  for (let i = 0; i < text.length; i += 4) {
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    await new Promise((r) => setTimeout(r, 30));
+    yield { text: text.slice(i, i + 4) };
+  }
+}
+
 export function streamChat(conn, req) {
   if (!conn) throw new Error('接続先がありません。⚙ 設定 →「接続先」で追加してください。');
+  if (conn.type === 'dummy') return dummy(conn, req);
   if (!conn.apiKey?.trim()) throw new Error('APIキーが入力されていません。⚙ 設定 →「接続先」で入力してください。');
   if (!conn.model?.trim()) throw new Error('モデル名が入力されていません。⚙ 設定 →「接続先」で入力してください。');
   return conn.type === 'openai' ? openai(conn, req) : gemini(conn, req);

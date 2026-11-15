@@ -19,7 +19,8 @@ function h(tag, props = {}, ...kids) {
 
 // ---------- 状態 ----------
 const S = {
-  settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null },
+  settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null,
+    ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false } },
   prompts: [],
   chats: [],
   chat: null,
@@ -34,6 +35,23 @@ const S = {
 
 const saveSettings = () => db.kvSet('settings', S.settings);
 const activeConn = () => S.settings.connections.find((c) => c.id === S.settings.activeConnId);
+const modelLabel = (c) => (!c ? 'モデル未選択' : c.type === 'dummy' ? 'ダミーAI' : c.model || 'モデル未選択');
+
+const THEMES = {
+  auto: ['自動', 'linear-gradient(90deg,#f6f4ef 50%,#17181b 50%)'],
+  kinari: ['生成り', '#f6f4ef'], sakura: ['桜', '#f8dfe5'], sora: ['空', '#d9eaf6'], wakakusa: ['若草', '#e1eccf'],
+  sepia: ['セピア', '#ead9b8'], sumi: ['墨', '#212327'], aiyo: ['藍夜', '#1b2540'], azuki: ['小豆', '#4a2c36'],
+};
+
+function applyUi() {
+  const ui = S.settings.ui;
+  const root = document.documentElement;
+  if (ui.theme === 'auto') delete root.dataset.theme; else root.dataset.theme = ui.theme;
+  root.style.setProperty('--msg-size', `${ui.fontSize}px`);
+  const color = getComputedStyle(root).getPropertyValue('--panel').trim();
+  document.querySelectorAll('meta[name=theme-color]').forEach((m) => { m.content = color; m.removeAttribute('media'); });
+}
+
 const promptOf = (id) => S.prompts.find((p) => p.id === id);
 
 const DEFAULT_MODELS = ['gemini-3.1-pro-preview', 'gemini-3.5-flash-lite', 'gemini-4-hydrogen', 'gemini-4-argon', 'gemini-4-carbon'];
@@ -198,7 +216,7 @@ function messageEl(m) {
 function render() {
   $('#chatTitle').textContent = S.chat.title || '新しいチャット';
   $('#promptChip').textContent = `プロンプト：${promptOf(S.chat.promptId)?.name || 'なし'}`;
-  $('#modelChip').textContent = activeConn()?.model || 'モデル未選択';
+  $('#modelChip').textContent = modelLabel(activeConn());
   $('#btnImages').classList.toggle('off', !S.settings.showImages);
   $('#btnSend').textContent = S.busy ? '停止' : '送信';
 
@@ -234,7 +252,10 @@ async function generate(parentId) {
 
   const box = $('#messages');
   const body = box.querySelector(`[data-id="${m.id}"] .body`);
-  body.textContent = '…';
+  const ui = S.settings.ui;
+  const started = Date.now();
+  const waiting = () => `${m.thought ? '思考中' : '応答待ち'}…${ui.showTimer ? ` ${Math.round((Date.now() - started) / 1000)}秒` : ''}`;
+  body.textContent = waiting();
   let queued = false;
   const paint = () => {
     if (queued) return;
@@ -243,11 +264,12 @@ async function generate(parentId) {
       queued = false;
       if (S.chat !== chat) return;
       const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-      body.textContent = m.text || '（思考中…）';
-      if (stick) scrollBottom();
+      body.textContent = m.text || waiting();
+      if (stick && ui.autoScroll) scrollBottom();
     });
   };
 
+  const ticker = setInterval(() => { if (!m.text) paint(); }, 1000);
   try {
     for await (const ev of streamChat(activeConn(), { system, messages: history, signal: S.abort.signal })) {
       if (ev.text) m.text += ev.text;
@@ -259,6 +281,7 @@ async function generate(parentId) {
     if (e.name !== 'AbortError') S.error = e.message;
   }
 
+  clearInterval(ticker);
   S.busy = false;
   if (m.text) {
     await db.put('messages', m);
@@ -316,7 +339,7 @@ async function saveEdit(m, text, asBranch) {
 async function removeMessage(m) {
   const ids = subtree(m.id);
   const more = ids.length > 1 ? `\nこの先に続く ${ids.length - 1} 件も一緒に消えます。` : '';
-  if (!confirm(`このメッセージを削除しますか？${more}`)) return;
+  if (!S.settings.ui.skipDeleteConfirm && !confirm(`このメッセージを削除しますか？${more}`)) return;
   const onPath = pathTo(S.chat.leafId).includes(m);
   ids.forEach((id) => S.msgs.delete(id));
   if (onPath) {
@@ -413,7 +436,9 @@ function openModelSheet() {
   const many = S.settings.connections.length > 1;
   $('#sheetBody').replaceChildren(...S.settings.connections.flatMap((c) => [
     many && h('p', { class: 'hint', text: c.name || '（名前なし）' }),
-    modelEditor(c, () => { S.settings.activeConnId = c.id; saveSettings(); closePanels(); }, openModelSheet),
+    c.type === 'dummy'
+      ? h('div', { class: `row ${c.id === S.settings.activeConnId ? 'on' : ''}` }, h('button', { class: 'plain', text: `${c.id === S.settings.activeConnId ? '✔ ' : ''}ダミーAI（通信しません）`, onclick: () => { S.settings.activeConnId = c.id; saveSettings(); closePanels(); } }))
+      : modelEditor(c, () => { S.settings.activeConnId = c.id; saveSettings(); closePanels(); }, openModelSheet),
   ]).filter(Boolean));
   show('#sheet');
 }
@@ -438,7 +463,8 @@ function select(obj, key, options, save, after) {
 
 function connCard(c) {
   const isActive = c.id === S.settings.activeConnId;
-  const isGemini = c.type !== 'openai';
+  const isDummy = c.type === 'dummy';
+  const isGemini = c.type === 'vertex' || c.type === 'gemini';
   const again = () => renderSettings();
   const result = h('div', { class: 'result' });
 
@@ -461,15 +487,16 @@ function connCard(c) {
     h('summary', { text: `${c.name || '（名前なし）'}${isActive ? '　✔ 使用中' : ''}` }),
     field('名前', bound(c, 'name', () => { saveSettings(); again(); }, { type: 'text' })),
     field('種類', select(c, 'type', CONN_TYPES, saveSettings, again)),
-    field('APIキー', bound(c, 'apiKey', saveSettings, { type: 'password', autocomplete: 'off' }), 'この端末の中だけに保存されます。'),
-    !isGemini && field('接続先URL', bound(c, 'baseUrl', saveSettings, { type: 'text', placeholder: DEFAULT_BASE_URL, inputMode: 'url' }), '空欄ならOpenRouterにつなぎます。'),
-    h('div', { class: 'f' }, 'モデル（タップで選ぶ。チャット画面上部のモデル名からも切り替えられます）', modelEditor(c, null, again)),
-    field('温度（空欄＝おまかせ）', bound(c, 'temperature', saveSettings, { type: 'number', step: '0.1', min: '0', max: '2', inputMode: 'decimal' }), 'Gemini 4 など新しいモデルは温度に対応していません。空欄のままにしてください。古いモデルでは、高いほど自由な文章、低いほど安定した文章になります。'),
-    field('最大出力トークン（空欄＝おまかせ）', bound(c, 'maxTokens', saveSettings, { type: 'number', min: '1', inputMode: 'numeric' })),
-    field('思考の設定', select(c, 'thinkMode', { none: '指定しない（モデルの標準）', level: '思考レベルで指定（Gemini 3 以降）', budget: '思考予算で指定（Gemini 2.5 など古いモデル）' }, saveSettings, again)),
-    c.thinkMode === 'budget' && field('思考予算', bound(c, 'thinkBudget', saveSettings, { type: 'number', inputMode: 'numeric' }), '0＝思考しない、-1＝自動。Gemini 4 では使えません（エラーになります）。'),
-    c.thinkMode === 'level' && field('思考レベル', select(c, 'thinkLevel', { low: '低', medium: '中', high: '高', xhigh: '最高（Gemini 4 Hydrogen のみ）', minimal: '最小（Gemini 3 系のみ）' }, saveSettings), 'Gemini 4 は 低・中・高 の3段階です。対応していない段階を選ぶとエラーになります。'),
-    h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!c.showThoughts, onchange: (e) => { c.showThoughts = e.target.checked; saveSettings(); } }), '思考の内容を表示する'),
+    !isDummy && field('APIキー', bound(c, 'apiKey', saveSettings, { type: 'password', autocomplete: 'off' }), 'この端末の中だけに保存されます。'),
+    !isDummy && !isGemini && field('接続先URL', bound(c, 'baseUrl', saveSettings, { type: 'text', placeholder: DEFAULT_BASE_URL, inputMode: 'url' }), '空欄ならOpenRouterにつなぎます。'),
+    !isDummy && h('div', { class: 'f' }, 'モデル（タップで選ぶ。チャット画面上部のモデル名からも切り替えられます）', modelEditor(c, null, again)),
+    !isDummy && field('温度（空欄＝おまかせ）', bound(c, 'temperature', saveSettings, { type: 'number', step: '0.1', min: '0', max: '2', inputMode: 'decimal' }), 'Gemini 4 など新しいモデルは温度に対応していません。空欄のままにしてください。古いモデルでは、高いほど自由な文章、低いほど安定した文章になります。'),
+    !isDummy && field('最大出力トークン（空欄＝おまかせ）', bound(c, 'maxTokens', saveSettings, { type: 'number', min: '1', inputMode: 'numeric' })),
+    !isDummy && field('思考の設定', select(c, 'thinkMode', { none: '指定しない（モデルの標準）', level: '思考レベルで指定（Gemini 3 以降）', budget: '思考予算で指定（Gemini 2.5 など古いモデル）' }, saveSettings, again)),
+    !isDummy && c.thinkMode === 'budget' && field('思考予算', bound(c, 'thinkBudget', saveSettings, { type: 'number', inputMode: 'numeric' }), '0＝思考しない、-1＝自動。Gemini 4 では使えません（エラーになります）。'),
+    !isDummy && c.thinkMode === 'level' && field('思考レベル', select(c, 'thinkLevel', { low: '低', medium: '中', high: '高', xhigh: '最高（Gemini 4 Hydrogen のみ）', minimal: '最小（Gemini 3 系のみ）' }, saveSettings), 'Gemini 4 は 低・中・高 の3段階です。対応していない段階を選ぶとエラーになります。'),
+    !isDummy && h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!c.showThoughts, onchange: (e) => { c.showThoughts = e.target.checked; saveSettings(); } }), '思考の内容を表示する'),
+    isDummy && field('返す文章（空欄＝受け取った文章をそのまま返す）', bound(c, 'dummyText', saveSettings, { placeholder: '画像URLや長文を入れて、表示の確認に使えます。' }, 'textarea'), 'APIを使わずに、画面の動き・分岐・画像表示などを試すための接続先です。料金はかかりません。'),
     isGemini && field('安全フィルター', select(c, 'safety', { default: '指定しない（標準）', BLOCK_ONLY_HIGH: '弱め', BLOCK_NONE: 'ブロックしない' }, saveSettings)),
     h('div', { class: 'btnrow' },
       !isActive && h('button', { class: 'primary', text: 'この接続を使う', onclick: () => { S.settings.activeConnId = c.id; saveSettings(); again(); } }),
@@ -560,6 +587,29 @@ function renderSettings() {
         renderSettings();
       } }),
     );
+  } else if (S.tab === 'ui') {
+    const ui = S.settings.ui;
+    const save = () => { saveSettings(); applyUi(); };
+    const check = (key, label, hint) => h('div', {},
+      h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!ui[key], onchange: (e) => { ui[key] = e.target.checked; save(); } }), label),
+      hint && h('div', { class: 'hint', text: hint }));
+    body.replaceChildren(
+      h('div', { class: 'card' },
+        h('strong', { text: '配色' }),
+        h('div', { class: 'swatches' }, Object.entries(THEMES).map(([key, [name, color]]) =>
+          h('button', { class: `swatch ${ui.theme === key ? 'on' : ''}`, onclick: () => { ui.theme = key; save(); renderSettings(); } },
+            h('i', { style: `background:${color}` }), name))),
+        h('div', { class: 'hint', text: '「自動」はiPhoneのライト／ダーク設定に合わせます。' })),
+      h('div', { class: 'card' },
+        h('strong', { text: '文字' }),
+        field('本文の文字サイズ', select(ui, 'fontSize', { 14: '小', 16: '標準', 18: '大', 20: '特大' }, save))),
+      h('div', { class: 'card' },
+        h('strong', { text: '操作' }),
+        check('autoScroll', '返事が届いている間、自動で下へスクロールする'),
+        check('showTimer', '返事を待っている間、秒数を表示する'),
+        check('enterSend', 'Enterキーで送信する', 'オンにすると、iPhoneのキーボードでは「改行」キーで送信されます（改行できなくなります）。外付けキーボードやPC向けです。Shift+Enterで改行できます。'),
+        check('skipDeleteConfirm', 'メッセージ削除のときに確認しない')),
+    );
   } else {
     const picker = h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: () => picker.files[0] && importData(picker.files[0]) });
     body.replaceChildren(
@@ -571,6 +621,23 @@ function renderSettings() {
         h('strong', { text: '読み込み' }),
         h('p', { class: 'hint', text: '書き出したファイルを読み込みます。今あるチャットは消えず、追加されます。' }),
         h('button', { text: 'ファイルを選ぶ', onclick: () => picker.click() }), picker),
+      h('div', { class: 'card' },
+        h('strong', { text: 'アプリを更新' }),
+        h('p', { class: 'hint', text: '新しい機能が反映されないときに押してください。チャットや設定は消えません。' }),
+        h('button', { text: '最新版に更新する', onclick: async () => {
+          for (const r of await navigator.serviceWorker?.getRegistrations?.() || []) await r.unregister();
+          for (const k of await caches.keys()) await caches.delete(k);
+          location.reload();
+        } })),
+      h('div', { class: 'card' },
+        h('strong', { text: 'すべて消す' }),
+        h('p', { class: 'hint', text: 'チャット・プロンプト・接続先（APIキー）をすべて削除します。元に戻せません。' }),
+        h('button', { class: 'danger', text: '全データを削除する', onclick: async () => {
+          if (!confirm('チャット・プロンプト・APIキーをすべて削除します。\n本当によろしいですか？')) return;
+          if (!confirm('元に戻せません。先に「ファイルに書き出す」でバックアップを取りましたか？\nOKを押すと削除します。')) return;
+          await Promise.all(['chats', 'messages', 'prompts', 'kv'].map(async (st) => db.delMany(st, (await db.all(st)).map((x) => x.id ?? x.key))));
+          location.reload();
+        } })),
       h('p', { class: 'hint', text: 'データはこの端末のブラウザ内に保存されています。ホーム画面のアイコンを削除すると消えるので、ときどき書き出しておくと安心です。' }),
     );
   }
@@ -592,7 +659,10 @@ function resizeInput() {
 
 async function loadAll() {
   const [settings, prompts, chats] = await Promise.all([db.kvGet('settings'), db.all('prompts'), db.all('chats')]);
+  const uiDefaults = S.settings.ui;
   Object.assign(S.settings, settings);
+  S.settings.ui = { ...uiDefaults, ...settings?.ui };
+  applyUi();
   for (const c of S.settings.connections) {
     if (!Array.isArray(c.models)) c.models = c.type === 'openai' ? [] : [...DEFAULT_MODELS];
     if (c.model && !c.models.includes(c.model)) c.models.unshift(c.model);
@@ -611,8 +681,14 @@ async function loadAll() {
 $('#btnSend').addEventListener('click', send);
 $('#input').addEventListener('input', resizeInput);
 $('#input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+  if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+  if (e.metaKey || e.ctrlKey || (S.settings.ui.enterSend && !e.shiftKey)) { e.preventDefault(); send(); }
 });
+$('#btnBottom').addEventListener('click', scrollBottom);
+$('#messages').addEventListener('scroll', () => {
+  const box = $('#messages');
+  $('#btnBottom').hidden = box.scrollHeight - box.scrollTop - box.clientHeight < 300;
+}, { passive: true });
 $('#btnDrawer').addEventListener('click', openDrawer);
 $('#btnNewChat').addEventListener('click', async () => { await openChat(blankChat()); closePanels(); });
 $('#btnSettings').addEventListener('click', () => openSettings());
