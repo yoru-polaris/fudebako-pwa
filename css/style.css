@@ -37,7 +37,10 @@ button:disabled { opacity: .5; }
 .empty { color: var(--sub); text-align: center; margin-top: 30vh; font-size: 14px; }
 .msg { margin: 0 0 18px; }
 .msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg.user .body { background: var(--bubble); border-radius: 14px; padding: 8px 12px; margin-left: 12%; }
+.bubble { border-radius: 14px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); }
+.msg.user .bubble { background: var(--bubble); border-color: transparent; margin-left: 12%; }
+.bubble.folded { cursor: pointer; }
+.bubble.folded .body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--sub); white-space: normal; }
 .msg .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }
 .msg.user .tools { justify-content: flex-end; }
 .msg .tools button { border: 0; background: none; color: var(--sub); font-size: 13px; padding: 4px 8px; }

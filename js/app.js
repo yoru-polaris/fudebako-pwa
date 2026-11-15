@@ -159,11 +159,16 @@ function messageEl(m) {
     return el;
   }
 
-  if (m.thought) {
-    el.append(h('details', { class: 'thought' }, h('summary', { text: '思考' }), h('div', { text: m.thought })));
+  const fold = async () => { m.collapsed = !m.collapsed; render(); await db.put('messages', m); };
+  const bubble = h('div', { class: `bubble ${m.collapsed ? 'folded' : ''}`, onclick: m.collapsed && !S.busy ? fold : null });
+  if (m.collapsed) {
+    bubble.append(h('div', { class: 'body', text: m.text.replace(IMG_URL, '🖼').trim().slice(0, 200) }));
+  } else {
+    if (m.thought) bubble.append(h('details', { class: 'thought' }, h('summary', { text: '思考' }), h('div', { text: m.thought })));
+    bubble.append(h('div', { class: 'body' }, richText(m.text)));
+    if (m.notice) bubble.append(h('div', { class: 'hint', text: `※ ${m.notice}` }));
   }
-  el.append(h('div', { class: 'body' }, richText(m.text)));
-  if (m.notice) el.append(h('div', { class: 'hint', text: `※ ${m.notice}` }));
+  el.append(bubble);
 
   if (!S.busy) {
     const sibs = childrenOf(m.parentId);
@@ -176,6 +181,7 @@ function messageEl(m) {
         h('button', { text: '▶', disabled: idx === sibs.length - 1, 'aria-label': '次の枝', onclick: () => switchBranch(sibs[idx + 1]) }),
       );
     }
+    tools.append(h('button', { text: m.collapsed ? '▸ ひらく' : '▾ たたむ', onclick: fold }));
     if (m.role === 'assistant') tools.append(h('button', { text: '再生成', onclick: () => generate(m.parentId) }));
     tools.append(
       h('button', { text: '編集', onclick: () => { S.editing = m.id; render(); } }),
