@@ -68,7 +68,7 @@ function newConn() {
   };
 }
 
-const CHAR_TYPES = { char: '登場人物', hero: '主人公（自分が演じる・語る人物）', world: '世界設定' };
+const CHAR_TYPES = { char: '登場人物', hero: '主人公（自分が演じる・語る人物）', world: '世界設定', doc: '資料（まるごと読み込む）' };
 const chatChars = (chat) => (chat.charIds || []).map((id) => S.chars.find((c) => c.id === id)).filter(Boolean);
 
 // プロンプトとキャラ表から、AIに渡すシステムプロンプトを組み立てる。
@@ -86,7 +86,7 @@ function buildSystem(chat, recentText) {
     return text;
   };
   const chars = chatChars(chat);
-  for (const [type, title] of [['world', '# 世界設定'], ['hero', '# 主人公（ユーザーが演じる・語る人物）'], ['char', '# 登場人物']]) {
+  for (const [type, title] of [['world', '# 世界設定'], ['hero', '# 主人公（ユーザーが演じる・語る人物）'], ['char', '# 登場人物'], ['doc', '# 資料']]) {
     const list = chars.filter((c) => (c.type || 'char') === type);
     if (list.length) parts.push(`${title}\n\n${list.map(block).join('\n\n')}`);
   }
@@ -703,6 +703,7 @@ function openCharSheet() {
     ...group('hero', '主人公（1人だけ選べます）'),
     ...group('char', '登場人物（何人でも）'),
     ...group('world', '世界設定（いくつでも）'),
+    ...group('doc', '資料（いくつでも）'),
     h('div', { class: 'btnrow' }, h('button', { text: '追加・編集する', onclick: () => openSettings('chars') })),
   ].filter(Boolean));
   show('#sheet');
@@ -817,6 +818,7 @@ function promptCard(p) {
 function charCard(c) {
   const save = () => db.put('chars', c);
   const type = c.type || 'char';
+  const simple = type === 'hero' || type === 'doc';
   const bgPick = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async () => {
     if (!bgPick.files[0]) return;
     try { c.bg = await shrinkImage(bgPick.files[0]); await save(); applyBg(); renderSettings(); } catch (e) { alert(`この画像は読み込めませんでした。\n${e.message}`); }
@@ -825,11 +827,11 @@ function charCard(c) {
     h('summary', { text: c.name || '（名前なし）' }),
     field('名前', bound(c, 'name', () => { save(); card.querySelector('summary').textContent = c.name || '（名前なし）'; }, { type: 'text' })),
     field('種類', select(c, 'type', CHAR_TYPES, () => { save(); renderSettings(); })),
-    type === 'hero'
-      ? field('設定', bound(c, 'core', save, { class: 'big', placeholder: '年齢、容姿、性格、立場など。話によって主人公を変えたいときは、カードを複数作って切り替えます。' }, 'textarea'), 'この主人公を選んだチャットで、毎回AIに渡されます。')
+    simple
+      ? field(type === 'doc' ? '本文' : '設定', bound(c, 'core', save, { class: 'big', placeholder: type === 'doc' ? '設定資料やこれまでの本文などを、そのまま貼り付けます。' : '年齢、容姿、性格、立場など。話によって主人公を変えたいときは、カードを複数作って切り替えます。' }, 'textarea'), `これを選んだチャットで、毎回まるごとAIに渡されます。${type === 'doc' ? `（今 ${(c.core || '').length.toLocaleString()} 文字）` : ''}`)
       : field(type === 'world' ? '基本（いつも読み込む）' : '核（いつも読み込む）', bound(c, 'core', save, { placeholder: type === 'world' ? '世界のあらまし、時代、決まりごとなど。短くまとめます。' : '性格、口調、一人称、外見など。短くまとめます。' }, 'textarea'), 'このチャットで使うと決めたら、毎回AIに渡されます。'),
-    type !== 'hero' && field(type === 'world' ? '詳細（キーワードが出たときだけ読み込む）' : '詳細（名前が出たときだけ読み込む）', bound(c, 'detail', save, { class: 'big', placeholder: type === 'world' ? '地名、組織、用語、歴史など。長くても大丈夫です。' : '過去、人間関係、細かい設定、台詞の例など。長くても大丈夫です。' }, 'textarea'), '直近4つのメッセージに、名前か下のキーワードが出てきたときだけAIに渡されます。'),
-    type !== 'hero' && field('キーワード（「、」で区切る）', bound(c, 'keywords', save, { type: 'text', placeholder: type === 'world' ? '例: 王都、騎士団、魔法学院' : '例: ひよ、日和、先輩' })),
+    !simple && field(type === 'world' ? '詳細（キーワードが出たときだけ読み込む）' : '詳細（名前が出たときだけ読み込む）', bound(c, 'detail', save, { class: 'big', placeholder: type === 'world' ? '地名、組織、用語、歴史など。長くても大丈夫です。' : '過去、人間関係、細かい設定、台詞の例など。長くても大丈夫です。' }, 'textarea'), '直近4つのメッセージに、名前か下のキーワードが出てきたときだけAIに渡されます。'),
+    !simple && field('キーワード（「、」で区切る）', bound(c, 'keywords', save, { type: 'text', placeholder: type === 'world' ? '例: 王都、騎士団、魔法学院' : '例: ひよ、日和、先輩' })),
     type === 'char' && field('始まり方（最初のメッセージ）', bound(c, 'greeting', save, { placeholder: '新しいチャットでこの人物を選ぶと、「この始まり方で始める」ボタンが出ます。空欄なら出ません。' }, 'textarea')),
     type === 'char' && h('div', { class: 'f' }, '背景画像（この人物を使うチャットの背景）',
       h('div', { class: 'btnrow' },
@@ -930,6 +932,19 @@ function renderSettings() {
       ...section('hero', '主人公', '自分が演じる・語る人物。話によって変えたいときは複数作って、チャットごとに1人選びます。', '主人公'),
       ...section('char', '登場人物', '相手役や脇役。人数が多くても、詳細は名前が出た人の分だけ読み込まれます。', '登場人物'),
       ...section('world', '世界設定', '舞台や用語。キーワードが出たときだけ詳細を読み込みます（他のアプリの「ロアブック」と同じ働きです）。', '世界設定'),
+      ...section('doc', '資料', '設定をまとめたテキストを、分けずにまるごと読み込ませたいとき用です。Geminiのノートブックや、Claudeのプロジェクトに入れるテキストと同じ使い方ができます。', '資料'),
+      h('button', { class: 'wide', style: 'margin-top:8px', text: '＋ テキストファイルから資料を追加（複数可）', onclick: () => {
+        const el = h('input', { type: 'file', accept: '.txt,.md,text/plain,text/markdown', multiple: true, onchange: async () => {
+          for (const f of el.files) {
+            const c = { id: uid(), name: f.name.replace(/\.[^.]+$/, ''), type: 'doc', core: await f.text(), detail: '', keywords: '', greeting: '', createdAt: Date.now() };
+            S.chars.push(c);
+            await db.put('chars', c);
+          }
+          renderSettings();
+          toast(`${el.files.length} 件の資料を追加しました`);
+        } });
+        el.click();
+      } }),
     );
   } else if (S.tab === 'ui') {
     const ui = S.settings.ui;
