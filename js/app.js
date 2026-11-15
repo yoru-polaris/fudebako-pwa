@@ -20,7 +20,8 @@ function h(tag, props = {}, ...kids) {
 // ---------- 状態 ----------
 const S = {
   settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null,
-    ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false } },
+    ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false,
+      scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
   prompts: [],
   chats: [],
   chat: null,
@@ -48,6 +49,8 @@ function applyUi() {
   const root = document.documentElement;
   if (ui.theme === 'auto') delete root.dataset.theme; else root.dataset.theme = ui.theme;
   root.style.setProperty('--msg-size', `${ui.fontSize}px`);
+  root.style.setProperty('--veil', `${ui.bgVeil}%`);
+  root.style.setProperty('--bubble-alpha', `${ui.bubbleAlpha}%`);
   const color = getComputedStyle(root).getPropertyValue('--panel').trim();
   document.querySelectorAll('meta[name=theme-color]').forEach((m) => { m.content = color; m.removeAttribute('media'); });
 }
@@ -119,6 +122,14 @@ async function openChat(chat) {
 // ---------- 表示 ----------
 const IMG_URL = /(?:!\[[^\]]*\]\()?(https?:\/\/[^\s<>"'()（）「」【】]+?\.(?:avif|webp|png|jpe?g|gif))\)?/gi;
 
+function expandImages(text) {
+  const base = S.settings.ui.imgBase.trim();
+  if (!base) return text;
+  const ext = S.settings.ui.imgExt.trim();
+  return text.replace(/\[\[([^\[\]\n]{1,80})\]\]/g, (_, name) =>
+    `${base.replace(/\/?$/, '/')}${name.trim()}${/\.\w{2,5}$/.test(name.trim()) ? '' : ext}`);
+}
+
 function picture(url, show) {
   if (!show) {
     const chip = h('button', { class: 'picchip', text: '🖼 画像を表示', onclick: () => chip.replaceWith(picture(url, true)) });
@@ -135,6 +146,7 @@ function picture(url, show) {
 }
 
 function richText(text) {
+  text = expandImages(text);
   const frag = document.createDocumentFragment();
   const plain = (s) => {
     s.split(/\*\*(.+?)\*\*/s).forEach((part, i) => {
@@ -182,7 +194,7 @@ function messageEl(m) {
   const fold = async () => { m.collapsed = !m.collapsed; render(); await db.put('messages', m); };
   const bubble = h('div', { class: `bubble ${m.collapsed ? 'folded' : ''}`, onclick: m.collapsed && !S.busy ? fold : null });
   if (m.collapsed) {
-    bubble.append(h('div', { class: 'body', text: m.text.replace(IMG_URL, '🖼').trim().slice(0, 200) }));
+    bubble.append(h('div', { class: 'body', text: expandImages(m.text).replace(IMG_URL, '🖼').trim().slice(0, 200) }));
   } else {
     if (m.thought) bubble.append(h('details', { class: 'thought' }, h('summary', { text: '思考' }), h('div', { text: m.thought })));
     bubble.append(h('div', { class: 'body' }, richText(m.text)));
@@ -201,7 +213,8 @@ function messageEl(m) {
         h('button', { text: '▶', disabled: idx === sibs.length - 1, 'aria-label': '次の枝', onclick: () => switchBranch(sibs[idx + 1]) }),
       );
     }
-    tools.append(h('button', { text: m.collapsed ? '▸ ひらく' : '▾ たたむ', onclick: fold }));
+    tools.append(h('button', { class: 'sym', text: m.collapsed ? '▸' : '▾', 'aria-label': m.collapsed ? 'ひらく' : 'たたむ', onclick: fold }));
+    if (m.role === 'assistant' && m.id === S.chat.leafId) tools.append(h('button', { text: '続き', onclick: () => continueFrom(m) }));
     if (m.role === 'assistant') tools.append(h('button', { text: '再生成', onclick: () => generate(m.parentId) }));
     tools.append(
       h('button', { text: '編集', onclick: () => { S.editing = m.id; render(); } }),
@@ -215,7 +228,7 @@ function messageEl(m) {
 
 function render() {
   $('#chatTitle').textContent = S.chat.title || '新しいチャット';
-  $('#promptChip').textContent = `プロンプト：${promptOf(S.chat.promptId)?.name || 'なし'}`;
+  $('#promptChip').textContent = `📝 ${promptOf(S.chat.promptId)?.name || 'プロンプトなし'}`;
   $('#modelChip').textContent = modelLabel(activeConn());
   $('#btnImages').classList.toggle('off', !S.settings.showImages);
   $('#btnSend').textContent = S.busy ? '停止' : '送信';
@@ -232,14 +245,107 @@ function render() {
     box.append(h('div', { class: 'errbox' }, S.error,
       leaf?.role === 'user' && h('div', { class: 'btnrow' }, h('button', { text: 'もう一度試す', onclick: () => generate(leaf.id) }))));
   }
+  updateBar();
+}
+
+function updateBar() {
+  const box = $('#messages');
+  const bar = $('#scrollbar');
+  const on = S.settings.ui.scrollbar;
+  box.classList.toggle('custombar', on);
+  const range = box.scrollHeight - box.clientHeight;
+  bar.hidden = !on || range < 40;
+  if (bar.hidden) return;
+  const r = box.getBoundingClientRect();
+  bar.style.top = `${r.top}px`;
+  bar.style.height = `${r.height}px`;
+  const thumb = Math.max(44, (r.height * box.clientHeight) / box.scrollHeight);
+  bar.firstElementChild.style.height = `${thumb}px`;
+  bar.firstElementChild.style.top = `${(box.scrollTop / range) * (r.height - thumb)}px`;
+}
+
+function dragBar(e) {
+  const box = $('#messages');
+  const r = box.getBoundingClientRect();
+  const thumb = $('#scrollbar').firstElementChild.offsetHeight;
+  const ratio = Math.min(1, Math.max(0, (e.clientY - r.top - thumb / 2) / (r.height - thumb)));
+  box.scrollTop = ratio * (box.scrollHeight - box.clientHeight);
+}
+
+let bgUrl = '';
+async function applyBg() {
+  const box = $('#messages');
+  const blob = await db.kvGet('bg');
+  if (bgUrl) URL.revokeObjectURL(bgUrl);
+  bgUrl = blob ? URL.createObjectURL(blob) : '';
+  box.classList.toggle('hasbg', !!blob);
+  box.style.setProperty('--bgimg', blob ? `url("${bgUrl}")` : 'none');
+  return !!blob;
+}
+
+async function setBg(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const cv = h('canvas', { width: Math.round(bmp.width * scale), height: Math.round(bmp.height * scale) });
+    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
+    await db.kvSet('bg', blob);
+    await applyBg();
+    renderSettings();
+  } catch (e) {
+    alert(`この画像は読み込めませんでした。\n${e.message}`);
+  }
+}
+
+function saveText(list) {
+  const name = `${(S.chat.title || 'チャット').replace(/[\\/:*?"<>|\n]/g, '_')}.txt`;
+  closePanels();
+  return saveFile(new File([list.map((m) => m.text).join('\n\n')], name, { type: 'text/plain' }));
+}
+
+function openChatMenu() {
+  $('#sheetTitle').textContent = 'このチャット';
+  const path = pathTo(S.chat.leafId);
+  const item = (text, fn) => h('div', { class: 'row' }, h('button', { class: 'plain', text, onclick: fn }));
+  const foldAll = async (collapsed) => {
+    path.forEach((m) => (m.collapsed = collapsed));
+    closePanels();
+    await db.putMany('messages', path);
+  };
+  const copy = (list) => navigator.clipboard.writeText(list.map((m) => m.text).join('\n\n')).then(() => { toast('コピーしました'); closePanels(); });
+  $('#sheetBody').replaceChildren(
+    item('✏️ 名前を変える', async () => {
+      const name = prompt('チャットの名前', S.chat.title);
+      if (name == null) return;
+      S.chat.title = name.trim();
+      if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
+      closePanels();
+    }),
+    item('▸ すべてたたむ', () => foldAll(true)),
+    item('▾ すべてひらく', () => foldAll(false)),
+    item('📋 全文をコピー（今見えている枝）', () => copy(path)),
+    item('📋 AIの文章だけコピー', () => copy(path.filter((m) => m.role === 'assistant'))),
+    item('💾 テキストファイルで保存（全文）', () => saveText(path)),
+    item('💾 テキストファイルで保存（AIの文章だけ）', () => saveText(path.filter((m) => m.role === 'assistant'))),
+  );
+  show('#sheet');
 }
 
 // ---------- 会話の操作 ----------
-async function generate(parentId) {
+const continueFrom = (m) => generate(m.id, { extraUser: S.settings.ui.continueText.trim() || '続きを書いてください。' });
+
+async function generate(parentId, opts = {}) {
   if (S.busy) return;
+  const conn = activeConn();
   const system = promptOf(S.chat.promptId)?.text || '';
   const history = pathTo(parentId).map(({ role, text }) => ({ role, text }));
-  const m = { id: uid(), chatId: S.chat.id, parentId, role: 'assistant', text: '', thought: '', createdAt: Date.now() };
+  if (opts.extraUser) history.push({ role: 'user', text: opts.extraUser });
+  if (conn?.tailUser?.trim()) history.push({ role: 'user', text: conn.tailUser });
+  const prefill = conn?.tailModel?.trim() ? conn.tailModel : '';
+  if (prefill) history.push({ role: 'assistant', text: prefill });
+  let got = false;
+  const m = { id: uid(), chatId: S.chat.id, parentId, role: 'assistant', text: prefill && conn.tailJoin ? prefill : '', thought: '', createdAt: Date.now() };
   const chat = S.chat;
   S.msgs.set(m.id, m);
   chat.leafId = m.id;
@@ -264,15 +370,16 @@ async function generate(parentId) {
       queued = false;
       if (S.chat !== chat) return;
       const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-      body.textContent = m.text || waiting();
+      body.textContent = got || m.text ? m.text : waiting();
+      updateBar();
       if (stick && ui.autoScroll) scrollBottom();
     });
   };
 
   const ticker = setInterval(() => { if (!m.text) paint(); }, 1000);
   try {
-    for await (const ev of streamChat(activeConn(), { system, messages: history, signal: S.abort.signal })) {
-      if (ev.text) m.text += ev.text;
+    for await (const ev of streamChat(conn, { system, messages: history, signal: S.abort.signal })) {
+      if (ev.text) { m.text += ev.text; got = true; }
       if (ev.thought) m.thought += ev.thought;
       if (ev.notice) m.notice = ev.notice;
       paint();
@@ -283,7 +390,7 @@ async function generate(parentId) {
 
   clearInterval(ticker);
   S.busy = false;
-  if (m.text) {
+  if (got) {
     await db.put('messages', m);
   } else {
     S.msgs.delete(m.id);
@@ -300,6 +407,7 @@ async function send() {
   const leaf = S.msgs.get(S.chat.leafId);
   if (!text) {
     if (leaf?.role === 'user') generate(leaf.id);
+    else if (leaf) continueFrom(leaf);
     return;
   }
   const m = { id: uid(), chatId: S.chat.id, parentId: S.chat.leafId ?? null, role: 'user', text, createdAt: Date.now() };
@@ -497,6 +605,12 @@ function connCard(c) {
     !isDummy && c.thinkMode === 'level' && field('思考レベル', select(c, 'thinkLevel', { low: '低', medium: '中', high: '高', xhigh: '最高（Gemini 4 Hydrogen のみ）', minimal: '最小（Gemini 3 系のみ）' }, saveSettings), 'Gemini 4 は 低・中・高 の3段階です。対応していない段階を選ぶとエラーになります。'),
     !isDummy && h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!c.showThoughts, onchange: (e) => { c.showThoughts = e.target.checked; saveSettings(); } }), '思考の内容を表示する'),
     isDummy && field('返す文章（空欄＝受け取った文章をそのまま返す）', bound(c, 'dummyText', saveSettings, { placeholder: '画像URLや長文を入れて、表示の確認に使えます。' }, 'textarea'), 'APIを使わずに、画面の動き・分岐・画像表示などを試すための接続先です。料金はかかりません。'),
+!isDummy && h('details', { class: 'sub' },
+      h('summary', { text: 'ダミープロンプト（上級者向け）' }),
+      h('div', { class: 'hint', text: '送信するたびに、会話の最後へ自動で付け足す文章です。画面や履歴には残りません。空欄なら何もしません。' }),
+      field('ダミーUserプロンプト', bound(c, 'tailUser', saveSettings, { placeholder: '例: 上記の続きを、設定を守って書いてください。' }, 'textarea')),
+      field('ダミーModelプロンプト（返事の書き出し）', bound(c, 'tailModel', saveSettings, { placeholder: '例: 承知しました。続きを書きます。' }, 'textarea'), 'モデルによっては対応しておらず、エラーになることがあります。'),
+      h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!c.tailJoin, onchange: (e) => { c.tailJoin = e.target.checked; saveSettings(); } }), 'ダミーModelの文章を返事の先頭につなげて表示する')),
     isGemini && field('安全フィルター', select(c, 'safety', { default: '指定しない（標準）', BLOCK_ONLY_HIGH: '弱め', BLOCK_NONE: 'ブロックしない' }, saveSettings)),
     h('div', { class: 'btnrow' },
       !isActive && h('button', { class: 'primary', text: 'この接続を使う', onclick: () => { S.settings.activeConnId = c.id; saveSettings(); again(); } }),
@@ -536,10 +650,14 @@ async function exportData() {
   const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats, messages, prompts };
   const name = `sousaku-backup-${new Date().toISOString().slice(0, 10)}.json`;
   const file = new File([JSON.stringify(data)], name, { type: 'application/json' });
+  await saveFile(file);
+}
+
+async function saveFile(file) {
   if (navigator.canShare?.({ files: [file] })) {
     try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; }
   }
-  const a = h('a', { href: URL.createObjectURL(file), download: name });
+  const a = h('a', { href: URL.createObjectURL(file), download: file.name });
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
@@ -577,7 +695,7 @@ function renderSettings() {
     );
   } else if (S.tab === 'prompts') {
     body.replaceChildren(
-      h('p', { class: 'hint', text: '執筆用・ロールプレイ用などを保存しておき、チャット画面上部の「プロンプト：」をタップして切り替えます。' }),
+      h('p', { class: 'hint', text: '執筆用・ロールプレイ用などを保存しておき、チャット画面上部の「📝」をタップして切り替えます。' }),
       ...S.prompts.map(promptCard),
       h('button', { class: 'wide', text: '＋ プロンプトを追加', onclick: async () => {
         const p = { id: uid(), name: '新しいプロンプト', text: '', createdAt: Date.now() };
@@ -590,6 +708,13 @@ function renderSettings() {
   } else if (S.tab === 'ui') {
     const ui = S.settings.ui;
     const save = () => { saveSettings(); applyUi(); };
+    const bgPicker = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async () => { if (bgPicker.files[0]) { await setBg(bgPicker.files[0]); S.hasBg = true; renderSettings(); } } });
+    const range = (key, min, max) => {
+      const el = h('input', { type: 'range', min, max, value: ui[key] });
+      el.addEventListener('input', () => { ui[key] = Number(el.value); applyUi(); el.parentElement.firstChild.textContent = el.parentElement.firstChild.textContent.replace(/\d+％/, `${el.value}％`); });
+      el.addEventListener('change', save);
+      return el;
+    };
     const check = (key, label, hint) => h('div', {},
       h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!ui[key], onchange: (e) => { ui[key] = e.target.checked; save(); } }), label),
       hint && h('div', { class: 'hint', text: hint }));
@@ -604,7 +729,22 @@ function renderSettings() {
         h('strong', { text: '文字' }),
         field('本文の文字サイズ', select(ui, 'fontSize', { 14: '小', 16: '標準', 18: '大', 20: '特大' }, save))),
       h('div', { class: 'card' },
+        h('strong', { text: '背景画像' }),
+        h('div', { class: 'btnrow' },
+          h('button', { text: S.hasBg ? '画像を変える' : '画像を選ぶ', onclick: () => bgPicker.click() }),
+          S.hasBg && h('button', { class: 'danger', text: '背景をやめる', onclick: async () => { await db.del('kv', 'bg'); S.hasBg = await applyBg(); renderSettings(); } }),
+          bgPicker),
+        S.hasBg && field(`背景の薄さ（${ui.bgVeil}％）`, range('bgVeil', 0, 100), '大きいほど画像が薄くなり、文字が読みやすくなります。'),
+        S.hasBg && field(`吹き出しの濃さ（${ui.bubbleAlpha}％）`, range('bubbleAlpha', 20, 100), '小さいほど吹き出しが透けて、背景が見えます。')),
+      h('div', { class: 'card' },
+        h('strong', { text: '画像URLの短縮書き' }),
+        h('div', { class: 'hint', text: 'ベースURLを入れておくと、AIが [[ひより/笑顔]] と書いただけで画像として表示します。プロンプトには「画像は [[キャラ名/表情]] の形で書く」と指示してください。空欄なら使いません。' }),
+        field('ベースURL', bound(ui, 'imgBase', save, { type: 'text', placeholder: 'https://example.netlify.app/', inputMode: 'url', autocapitalize: 'off' })),
+        field('拡張子', bound(ui, 'imgExt', save, { type: 'text', placeholder: '.avif', autocapitalize: 'off' }))),
+      h('div', { class: 'card' },
         h('strong', { text: '操作' }),
+        check('scrollbar', '右端にスクロールバーを表示する', '指でつまんで動かすと、長い会話をすばやく移動できます。'),
+        field('「続き」ボタンでAIに送る指示', bound(ui, 'continueText', save, { type: 'text' }), '最後の返事の下の「続き」を押すと、この文章をこっそり送って続きを書かせます。画面には残りません。'),
         check('autoScroll', '返事が届いている間、自動で下へスクロールする'),
         check('showTimer', '返事を待っている間、秒数を表示する'),
         check('enterSend', 'Enterキーで送信する', 'オンにすると、iPhoneのキーボードでは「改行」キーで送信されます（改行できなくなります）。外付けキーボードやPC向けです。Shift+Enterで改行できます。'),
@@ -663,6 +803,8 @@ async function loadAll() {
   Object.assign(S.settings, settings);
   S.settings.ui = { ...uiDefaults, ...settings?.ui };
   applyUi();
+  const hasBg = await applyBg();
+  S.hasBg = hasBg;
   for (const c of S.settings.connections) {
     if (!Array.isArray(c.models)) c.models = c.type === 'openai' ? [] : [...DEFAULT_MODELS];
     if (c.model && !c.models.includes(c.model)) c.models.unshift(c.model);
@@ -685,6 +827,11 @@ $('#input').addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || (S.settings.ui.enterSend && !e.shiftKey)) { e.preventDefault(); send(); }
 });
 $('#btnBottom').addEventListener('click', scrollBottom);
+$('#messages').addEventListener('scroll', updateBar, { passive: true });
+window.addEventListener('resize', updateBar);
+$('#scrollbar').addEventListener('pointerdown', (e) => { e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.classList.add('drag'); dragBar(e); });
+$('#scrollbar').addEventListener('pointermove', (e) => { if (e.currentTarget.classList.contains('drag')) dragBar(e); });
+for (const ev of ['pointerup', 'pointercancel']) $('#scrollbar').addEventListener(ev, (e) => e.currentTarget.classList.remove('drag'));
 $('#messages').addEventListener('scroll', () => {
   const box = $('#messages');
   $('#btnBottom').hidden = box.scrollHeight - box.scrollTop - box.clientHeight < 300;
@@ -700,13 +847,7 @@ $('#btnImages').addEventListener('click', () => {
   render();
   toast(S.settings.showImages ? '画像を表示します' : '画像を隠します');
 });
-$('#chatTitle').addEventListener('click', async () => {
-  const name = prompt('チャットの名前', S.chat.title);
-  if (name == null) return;
-  S.chat.title = name.trim();
-  if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
-  render();
-});
+$('#chatTitle').addEventListener('click', openChatMenu);
 $('#backdrop').addEventListener('click', closePanels);
 document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', closePanels));
 document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => { S.tab = b.dataset.tab; S.openCard = null; renderSettings(); }));
