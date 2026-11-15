@@ -1,6 +1,6 @@
 // IndexedDB の薄いラッパー。保存場所: chats / messages / prompts / kv
 const NAME = 'sousaku';
-const VERSION = 1;
+const VERSION = 2;
 let opening;
 
 function open() {
@@ -8,10 +8,12 @@ function open() {
     const req = indexedDB.open(NAME, VERSION);
     req.onupgradeneeded = () => {
       const d = req.result;
-      d.createObjectStore('chats', { keyPath: 'id' });
-      d.createObjectStore('messages', { keyPath: 'id' }).createIndex('chatId', 'chatId');
-      d.createObjectStore('prompts', { keyPath: 'id' });
-      d.createObjectStore('kv', { keyPath: 'key' });
+      const has = (name) => d.objectStoreNames.contains(name);
+      if (!has('chats')) d.createObjectStore('chats', { keyPath: 'id' });
+      if (!has('messages')) d.createObjectStore('messages', { keyPath: 'id' }).createIndex('chatId', 'chatId');
+      if (!has('prompts')) d.createObjectStore('prompts', { keyPath: 'id' });
+      if (!has('kv')) d.createObjectStore('kv', { keyPath: 'key' });
+      if (!has('chars')) d.createObjectStore('chars', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

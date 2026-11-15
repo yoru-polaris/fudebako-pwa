@@ -23,6 +23,7 @@
       <button id="chatTitle" class="plain">新しいチャット</button>
       <div id="chips">
         <button id="promptChip" class="chip">プロンプト：なし</button>
+        <button id="charChip" class="chip">👤 0</button>
         <button id="modelChip" class="chip">モデル未選択</button>
       </div>
     </div>
@@ -34,7 +35,8 @@
   <div id="scrollbar" hidden><i></i></div>
 
   <footer id="composer">
-    <button id="btnBottom" aria-label="一番下へ" hidden>▼</button>
+    <button id="btnTop" class="jump" aria-label="一番上へ" hidden>▲</button>
+    <button id="btnBottom" class="jump" aria-label="一番下へ" hidden>▼</button>
     <textarea id="input" rows="1" placeholder="メッセージを入力"></textarea>
     <button id="btnSend" class="primary">送信</button>
   </footer>
@@ -48,6 +50,8 @@
     <button class="iconbtn" data-close aria-label="閉じる">✕</button>
   </div>
   <button id="btnNewChat" class="primary wide">＋ 新しいチャット</button>
+  <div class="btnrow" id="drawerTools"></div>
+  <input id="chatSearch" type="text" placeholder="🔍 タイトル・本文を検索" style="margin-top:8px">
   <div id="chatList"></div>
 </aside>
 
@@ -67,6 +71,7 @@
   <nav id="tabs">
     <button data-tab="conn" class="on">接続先</button>
     <button data-tab="prompts">プロンプト</button>
+    <button data-tab="chars">キャラ</button>
     <button data-tab="ui">表示</button>
     <button data-tab="data">データ</button>
   </nav>

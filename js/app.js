@@ -19,10 +19,11 @@ function h(tag, props = {}, ...kids) {
 
 // ---------- 状態 ----------
 const S = {
-  settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null,
+  settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null, lastCharIds: [],
     ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false,
       scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
   prompts: [],
+  chars: [],
   chats: [],
   chat: null,
   msgs: new Map(),
@@ -67,9 +68,35 @@ function newConn() {
   };
 }
 
+const CHAR_TYPES = { char: '登場人物', hero: '主人公（自分が演じる・語る人物）', world: '世界設定' };
+const chatChars = (chat) => (chat.charIds || []).map((id) => S.chars.find((c) => c.id === id)).filter(Boolean);
+
+// プロンプトとキャラ表から、AIに渡すシステムプロンプトを組み立てる。
+// 「詳細」は、直近の会話に名前かキーワードが出たキャラの分だけ入れる。
+function buildSystem(chat, recentText) {
+  const parts = [promptOf(chat.promptId)?.text || ''];
+  const loaded = [];
+  const block = (c) => {
+    let text = `## ${c.name}\n${c.core || ''}`.trim();
+    const keys = [c.name, ...(c.keywords || '').split(/[,、，\n]+/)].map((k) => k.trim()).filter(Boolean);
+    if (c.detail?.trim() && keys.some((k) => recentText.includes(k))) {
+      text += `\n${c.detail.trim()}`;
+      loaded.push(c.name);
+    }
+    return text;
+  };
+  const chars = chatChars(chat);
+  for (const [type, title] of [['world', '# 世界設定'], ['hero', '# 主人公（ユーザーが演じる・語る人物）'], ['char', '# 登場人物']]) {
+    const list = chars.filter((c) => (c.type || 'char') === type);
+    if (list.length) parts.push(`${title}\n\n${list.map(block).join('\n\n')}`);
+  }
+  return { system: parts.filter(Boolean).join('\n\n'), loaded };
+}
+
 function blankChat() {
   const promptId = promptOf(S.settings.lastPromptId) ? S.settings.lastPromptId : null;
-  return { id: uid(), title: '', promptId, createdAt: Date.now(), updatedAt: Date.now(), leafId: null };
+  const charIds = (S.settings.lastCharIds || []).filter((id) => S.chars.some((c) => c.id === id));
+  return { id: uid(), title: '', promptId, charIds, createdAt: Date.now(), updatedAt: Date.now(), leafId: null };
 }
 
 // ---------- 会話の木 ----------
@@ -199,6 +226,7 @@ function messageEl(m) {
     if (m.thought) bubble.append(h('details', { class: 'thought' }, h('summary', { text: '思考' }), h('div', { text: m.thought })));
     bubble.append(h('div', { class: 'body' }, richText(m.text)));
     if (m.notice) bubble.append(h('div', { class: 'hint', text: `※ ${m.notice}` }));
+    if (m.loaded?.length) bubble.append(h('div', { class: 'hint', text: `📖 詳細を読み込み: ${m.loaded.join('、')}` }));
   }
   el.append(bubble);
 
@@ -230,6 +258,7 @@ function render() {
   $('#chatTitle').textContent = S.chat.title || '新しいチャット';
   $('#promptChip').textContent = `📝 ${promptOf(S.chat.promptId)?.name || 'プロンプトなし'}`;
   $('#modelChip').textContent = modelLabel(activeConn());
+  $('#charChip').textContent = `👤 ${chatChars(S.chat).length}`;
   $('#btnImages').classList.toggle('off', !S.settings.showImages);
   $('#btnSend').textContent = S.busy ? '停止' : '送信';
 
@@ -338,14 +367,15 @@ const continueFrom = (m) => generate(m.id, { extraUser: S.settings.ui.continueTe
 async function generate(parentId, opts = {}) {
   if (S.busy) return;
   const conn = activeConn();
-  const system = promptOf(S.chat.promptId)?.text || '';
   const history = pathTo(parentId).map(({ role, text }) => ({ role, text }));
+  const { system, loaded } = buildSystem(S.chat, history.slice(-4).map((x) => x.text).join('\n'));
   if (opts.extraUser) history.push({ role: 'user', text: opts.extraUser });
   if (conn?.tailUser?.trim()) history.push({ role: 'user', text: conn.tailUser });
   const prefill = conn?.tailModel?.trim() ? conn.tailModel : '';
   if (prefill) history.push({ role: 'assistant', text: prefill });
   let got = false;
   const m = { id: uid(), chatId: S.chat.id, parentId, role: 'assistant', text: prefill && conn.tailJoin ? prefill : '', thought: '', createdAt: Date.now() };
+  if (loaded.length) m.loaded = loaded;
   const chat = S.chat;
   S.msgs.set(m.id, m);
   chat.leafId = m.id;
@@ -473,15 +503,85 @@ function closePanels() {
   render();
 }
 
-function openDrawer() {
+const stamp = (t) => new Date(t).toLocaleString('ja-JP', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+function pickFile(accept, fn) {
+  const el = h('input', { type: 'file', accept, onchange: () => el.files[0] && fn(el.files[0]) });
+  el.click();
+}
+
+let chatQuery = '';
+let bodyIndex = null;
+
+async function searchChats(q) {
+  chatQuery = q.trim();
+  if (chatQuery && !bodyIndex) {
+    bodyIndex = new Map();
+    for (const m of await db.all('messages')) bodyIndex.set(m.chatId, `${bodyIndex.get(m.chatId) || ''}\n${m.text}`);
+  }
+  openDrawer(true);
+}
+
+function openDrawer(keepSearch) {
+  if (keepSearch !== true) { chatQuery = ''; bodyIndex = null; $('#chatSearch').value = ''; }
+  const hit = (c) => !chatQuery || (c.title || '').includes(chatQuery) || (bodyIndex?.get(c.id) || '').includes(chatQuery);
+  $('#drawerTools').replaceChildren(
+    h('button', { text: '全出力', onclick: exportData }),
+    h('button', { text: '取込', onclick: () => pickFile('.json,application/json', (f) => importData(f).then(openDrawer)) }),
+    h('button', { text: 'テキスト取込', onclick: () => pickFile('.txt,text/plain', importText) }),
+  );
   $('#chatList').replaceChildren(...S.chats
     .sort((a, b) => b.updatedAt - a.updatedAt)
-    .map((c) => h('div', { class: `row ${c === S.chat ? 'on' : ''}` },
-      h('button', { class: 'plain', text: c.title || '（無題）', onclick: async () => { await openChat(c); closePanels(); } }),
-      h('button', { class: 'iconbtn', text: '🗑', 'aria-label': '削除', onclick: () => removeChat(c) }),
+    .filter(hit)
+    .map((c) => h('div', { class: `chatrow ${c === S.chat ? 'on' : ''}` },
+      h('button', { class: 'plain', onclick: async () => { await openChat(c); closePanels(); } },
+        h('div', { class: 't', text: c.title || '（無題）' }),
+        h('div', { class: 'd', text: `作成 ${stamp(c.createdAt)}　更新 ${stamp(c.updatedAt)}` })),
+      h('div', { class: 'acts' },
+        h('button', { text: '✏️', 'aria-label': '名前を変える', onclick: async () => {
+          const name = prompt('チャットの名前', c.title);
+          if (name == null) return;
+          c.title = name.trim();
+          await db.put('chats', c);
+          render();
+          openDrawer();
+        } }),
+        h('button', { text: '出力', onclick: () => exportChat(c) }),
+        h('button', { text: '複製', onclick: () => duplicateChat(c) }),
+        h('button', { class: 'danger', text: '削除', onclick: () => removeChat(c) })),
     )));
-  if (!S.chats.length) $('#chatList').append(h('p', { class: 'hint', text: 'まだチャットはありません。' }));
+  if (!$('#chatList').children.length) $('#chatList').append(h('p', { class: 'hint', text: chatQuery ? '見つかりませんでした。' : 'まだチャットはありません。' }));
   show('#drawer');
+}
+
+async function exportChat(c) {
+  const messages = await db.messagesOf(c.id);
+  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats: [c], messages, chars: chatChars(c) };
+  await saveFile(new File([JSON.stringify(data)], `${(c.title || 'チャット').replace(/[\\/:*?"<>|\n]/g, '_')}.json`, { type: 'application/json' }));
+}
+
+async function duplicateChat(c) {
+  const msgs = await db.messagesOf(c.id);
+  const ids = new Map(msgs.map((m) => [m.id, uid()]));
+  const copy = { ...c, id: uid(), title: `${c.title || '無題'}（複製）`, createdAt: Date.now(), updatedAt: Date.now(), leafId: ids.get(c.leafId) ?? null };
+  await db.putMany('messages', msgs.map((m) => ({ ...m, id: ids.get(m.id), chatId: copy.id, parentId: m.parentId ? ids.get(m.parentId) : null })));
+  await db.put('chats', copy);
+  S.chats.unshift(copy);
+  openDrawer();
+  toast('複製しました');
+}
+
+async function importText(file) {
+  const text = (await file.text()).trim();
+  if (!text) { alert('ファイルが空です。'); return; }
+  const chat = { ...blankChat(), title: file.name.replace(/\.[^.]+$/, '') };
+  const m = { id: uid(), chatId: chat.id, parentId: null, role: 'assistant', text, createdAt: Date.now() };
+  chat.leafId = m.id;
+  await db.put('messages', m);
+  await openChat(chat);
+  await saveChat();
+  closePanels();
+  toast('テキストを新しいチャットとして取り込みました');
 }
 
 async function removeChat(c) {
@@ -537,6 +637,26 @@ function modelEditor(c, onPick, again) {
         again();
       } }))),
     h('div', { class: 'addrow' }, input, h('button', { text: '追加', onclick: add })));
+}
+
+function openCharSheet() {
+  $('#sheetTitle').textContent = 'このチャットで使うキャラ・設定';
+  const ids = (S.chat.charIds ||= []);
+  const toggle = async (c) => {
+    const i = ids.indexOf(c.id);
+    if (i >= 0) ids.splice(i, 1); else ids.push(c.id);
+    S.settings.lastCharIds = [...ids];
+    await saveSettings();
+    if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
+    openCharSheet();
+  };
+  $('#sheetBody').replaceChildren(
+    ...S.chars.map((c) => h('div', { class: `row ${ids.includes(c.id) ? 'on' : ''}` },
+      h('button', { class: 'plain', text: `${ids.includes(c.id) ? '✔' : '　'} ${c.name || '（名前なし）'}　〔${CHAR_TYPES[c.type || 'char'].slice(0, 4)}〕`, onclick: () => toggle(c) }))),
+    !S.chars.length && h('p', { class: 'hint', text: 'まだキャラ表がありません。下のボタンから作れます。' }),
+    h('div', { class: 'btnrow' }, h('button', { text: 'キャラ表を追加・編集する', onclick: () => openSettings('chars') })),
+  );
+  show('#sheet');
 }
 
 function openModelSheet() {
@@ -645,9 +765,29 @@ function promptCard(p) {
   return card;
 }
 
+function charCard(c) {
+  const save = () => db.put('chars', c);
+  const card = h('details', { class: 'card', open: S.openCard === c.id },
+    h('summary', { text: c.name || '（名前なし）' }),
+    field('名前', bound(c, 'name', () => { save(); card.querySelector('summary').textContent = c.name || '（名前なし）'; }, { type: 'text' })),
+    field('種類', select(c, 'type', CHAR_TYPES, save)),
+    field('核（いつも読み込む）', bound(c, 'core', save, { placeholder: '性格、口調、一人称、外見など。短くまとめます。' }, 'textarea'), 'このチャットで使うと決めたら、毎回AIに渡されます。'),
+    field('詳細（名前が出たときだけ読み込む）', bound(c, 'detail', save, { class: 'big', placeholder: '過去、人間関係、細かい設定、台詞の例など。長くても大丈夫です。' }, 'textarea'), '直近4つのメッセージに、名前か下のキーワードが出てきたときだけAIに渡されます。'),
+    field('キーワード（あだ名など。「、」で区切る）', bound(c, 'keywords', save, { type: 'text', placeholder: '例: ひよ、日和、先輩' })),
+    h('div', { class: 'btnrow' }, h('button', { class: 'danger', text: '削除', onclick: async () => {
+      if (!confirm(`「${c.name}」を削除しますか？`)) return;
+      S.chars = S.chars.filter((x) => x !== c);
+      await db.del('chars', c.id);
+      renderSettings();
+    } })),
+  );
+  card.addEventListener('toggle', () => { if (card.open) S.openCard = c.id; else if (S.openCard === c.id) S.openCard = null; });
+  return card;
+}
+
 async function exportData() {
-  const [chats, messages, prompts] = await Promise.all([db.all('chats'), db.all('messages'), db.all('prompts')]);
-  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats, messages, prompts };
+  const [chats, messages, prompts, chars] = await Promise.all([db.all('chats'), db.all('messages'), db.all('prompts'), db.all('chars')]);
+  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats, messages, prompts, chars };
   const name = `sousaku-backup-${new Date().toISOString().slice(0, 10)}.json`;
   const file = new File([JSON.stringify(data)], name, { type: 'application/json' });
   await saveFile(file);
@@ -669,8 +809,9 @@ async function importData(file) {
     await db.putMany('chats', data.chats || []);
     await db.putMany('messages', data.messages || []);
     await db.putMany('prompts', data.prompts || []);
+    await db.putMany('chars', data.chars || []);
     await loadAll();
-    renderSettings();
+    if (!$('#settings').hidden) renderSettings();
     toast(`読み込みました（チャット ${data.chats?.length || 0} 件）`);
   } catch (e) {
     alert(`読み込めませんでした。\n${e.message}`);
@@ -702,6 +843,18 @@ function renderSettings() {
         S.prompts.push(p);
         S.openCard = p.id;
         await db.put('prompts', p);
+        renderSettings();
+      } }),
+    );
+  } else if (S.tab === 'chars') {
+    body.replaceChildren(
+      h('p', { class: 'hint', text: '登場人物・主人公・世界設定をカードにして保存します。チャット画面上部の「👤」をタップして、そのチャットで使うものを選びます。' }),
+      ...S.chars.map(charCard),
+      h('button', { class: 'wide', text: '＋ キャラ・設定を追加', onclick: async () => {
+        const c = { id: uid(), name: '新しいキャラ', type: 'char', core: '', detail: '', keywords: '', createdAt: Date.now() };
+        S.chars.push(c);
+        S.openCard = c.id;
+        await db.put('chars', c);
         renderSettings();
       } }),
     );
@@ -755,7 +908,7 @@ function renderSettings() {
     body.replaceChildren(
       h('div', { class: 'card' },
         h('strong', { text: '書き出し（バックアップ）' }),
-        h('p', { class: 'hint', text: 'チャット・枝分かれ・プロンプトを1つのファイルに保存します。APIキーは含まれません。' }),
+        h('p', { class: 'hint', text: 'チャット・枝分かれ・プロンプト・キャラ表を1つのファイルに保存します。APIキーは含まれません。' }),
         h('button', { class: 'primary', text: 'ファイルに書き出す', onclick: exportData })),
       h('div', { class: 'card' },
         h('strong', { text: '読み込み' }),
@@ -775,7 +928,7 @@ function renderSettings() {
         h('button', { class: 'danger', text: '全データを削除する', onclick: async () => {
           if (!confirm('チャット・プロンプト・APIキーをすべて削除します。\n本当によろしいですか？')) return;
           if (!confirm('元に戻せません。先に「ファイルに書き出す」でバックアップを取りましたか？\nOKを押すと削除します。')) return;
-          await Promise.all(['chats', 'messages', 'prompts', 'kv'].map(async (st) => db.delMany(st, (await db.all(st)).map((x) => x.id ?? x.key))));
+          await Promise.all(['chats', 'messages', 'prompts', 'chars', 'kv'].map(async (st) => db.delMany(st, (await db.all(st)).map((x) => x.id ?? x.key))));
           location.reload();
         } })),
       h('p', { class: 'hint', text: 'データはこの端末のブラウザ内に保存されています。ホーム画面のアイコンを削除すると消えるので、ときどき書き出しておくと安心です。' }),
@@ -798,7 +951,8 @@ function resizeInput() {
 }
 
 async function loadAll() {
-  const [settings, prompts, chats] = await Promise.all([db.kvGet('settings'), db.all('prompts'), db.all('chats')]);
+  const [settings, prompts, chats, chars] = await Promise.all([db.kvGet('settings'), db.all('prompts'), db.all('chats'), db.all('chars')]);
+  S.chars = chars.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   const uiDefaults = S.settings.ui;
   Object.assign(S.settings, settings);
   S.settings.ui = { ...uiDefaults, ...settings?.ui };
@@ -827,6 +981,7 @@ $('#input').addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || (S.settings.ui.enterSend && !e.shiftKey)) { e.preventDefault(); send(); }
 });
 $('#btnBottom').addEventListener('click', scrollBottom);
+$('#btnTop').addEventListener('click', () => { $('#messages').scrollTop = 0; });
 $('#messages').addEventListener('scroll', updateBar, { passive: true });
 window.addEventListener('resize', updateBar);
 $('#scrollbar').addEventListener('pointerdown', (e) => { e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.classList.add('drag'); dragBar(e); });
@@ -835,12 +990,15 @@ for (const ev of ['pointerup', 'pointercancel']) $('#scrollbar').addEventListene
 $('#messages').addEventListener('scroll', () => {
   const box = $('#messages');
   $('#btnBottom').hidden = box.scrollHeight - box.scrollTop - box.clientHeight < 300;
+  $('#btnTop').hidden = box.scrollTop < 300;
 }, { passive: true });
 $('#btnDrawer').addEventListener('click', openDrawer);
+$('#chatSearch').addEventListener('input', (e) => searchChats(e.target.value));
 $('#btnNewChat').addEventListener('click', async () => { await openChat(blankChat()); closePanels(); });
 $('#btnSettings').addEventListener('click', () => openSettings());
 $('#promptChip').addEventListener('click', openPromptSheet);
 $('#modelChip').addEventListener('click', openModelSheet);
+$('#charChip').addEventListener('click', openCharSheet);
 $('#btnImages').addEventListener('click', () => {
   S.settings.showImages = !S.settings.showImages;
   saveSettings();
