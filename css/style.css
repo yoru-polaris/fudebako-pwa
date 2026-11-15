@@ -150,3 +150,6 @@ details.sub { margin-top: 12px; } details.sub > summary { color: var(--sub); fon
 .chatrow .d { font-size: 12px; color: var(--sub); }
 .chatrow .acts { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
 .chatrow .acts button { font-size: 13px; padding: 3px 10px; }
+.grouphead { margin: 18px 0 4px; font-size: 15px; font-weight: 700; color: var(--accent); }
+.btnrow.center { justify-content: center; }
+.empty { white-space: pre-wrap; }

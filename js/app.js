@@ -90,6 +90,7 @@ function buildSystem(chat, recentText) {
     const list = chars.filter((c) => (c.type || 'char') === type);
     if (list.length) parts.push(`${title}\n\n${list.map(block).join('\n\n')}`);
   }
+  if (chat.note?.trim()) parts.push(`# 今回の話\n\n${chat.note.trim()}`);
   return { system: parts.filter(Boolean).join('\n\n'), loaded };
 }
 
@@ -144,6 +145,7 @@ async function openChat(chat) {
   if (S.chats.includes(chat)) { S.settings.lastChatId = chat.id; saveSettings(); }
   render();
   scrollBottom();
+  applyBg();
 }
 
 // ---------- 表示 ----------
@@ -267,7 +269,11 @@ function render() {
   box.replaceChildren(...path.map(messageEl));
   if (!path.length && !S.error) {
     const conn = activeConn();
-    box.append(h('div', { class: 'empty', text: conn?.apiKey ? 'メッセージを入力して始めましょう' : 'まず右上の ⚙ から「接続先」にAPIキーを入力してください' }));
+    const ready = conn?.apiKey || conn?.type === 'dummy';
+    const starts = chatChars(S.chat).filter((c) => c.greeting?.trim());
+    box.append(h('div', { class: 'empty' },
+      ready ? 'メッセージを入力して始めましょう' : 'まず右上の ⚙ から「接続先」にAPIキーを入力してください',
+      starts.map((c) => h('div', { class: 'btnrow center' }, h('button', { text: `「${c.name}」の始まり方で始める`, onclick: () => startWith(c) })))));
   }
   if (S.error) {
     const leaf = S.msgs.get(S.chat.leafId);
@@ -304,27 +310,48 @@ function dragBar(e) {
 let bgUrl = '';
 async function applyBg() {
   const box = $('#messages');
-  const blob = await db.kvGet('bg');
+  const global = await db.kvGet('bg');
+  const own = S.chat ? chatChars(S.chat).find((c) => c.bg)?.bg : null;
+  const blob = own || global;
   if (bgUrl) URL.revokeObjectURL(bgUrl);
   bgUrl = blob ? URL.createObjectURL(blob) : '';
   box.classList.toggle('hasbg', !!blob);
   box.style.setProperty('--bgimg', blob ? `url("${bgUrl}")` : 'none');
-  return !!blob;
+  return !!global;
+}
+
+async function shrinkImage(file) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const cv = h('canvas', { width: Math.round(bmp.width * scale), height: Math.round(bmp.height * scale) });
+  cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+  return new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
 }
 
 async function setBg(file) {
   try {
-    const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
-    const cv = h('canvas', { width: Math.round(bmp.width * scale), height: Math.round(bmp.height * scale) });
-    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
-    const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
-    await db.kvSet('bg', blob);
+    await db.kvSet('bg', await shrinkImage(file));
     await applyBg();
     renderSettings();
   } catch (e) {
     alert(`この画像は読み込めませんでした。\n${e.message}`);
   }
+}
+
+function openNote() {
+  $('#sheetTitle').textContent = '今回の話';
+  const ta = h('textarea', { class: 'big', value: S.chat.note || '', placeholder: 'このチャットだけの設定を書きます。\n例: 今回は文化祭の前日の話。ひよりと高坂がけんかするところから始める。' });
+  $('#sheetBody').replaceChildren(
+    h('p', { class: 'hint', text: 'プロンプト・キャラ表に加えて、このチャットのときだけAIに渡されます。画面には出ません。' }),
+    ta,
+    h('div', { class: 'btnrow' }, h('button', { class: 'primary', text: '保存', onclick: async () => {
+      S.chat.note = ta.value;
+      if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
+      closePanels();
+      toast('保存しました');
+    } })),
+  );
+  show('#sheet');
 }
 
 function saveText(list) {
@@ -351,6 +378,7 @@ function openChatMenu() {
       if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
       closePanels();
     }),
+    item(`📖 今回の話${S.chat.note?.trim() ? '（設定あり）' : ''}`, openNote),
     item('▸ すべてたたむ', () => foldAll(true)),
     item('▾ すべてひらく', () => foldAll(false)),
     item('📋 全文をコピー（今見えている枝）', () => copy(path)),
@@ -359,6 +387,15 @@ function openChatMenu() {
     item('💾 テキストファイルで保存（AIの文章だけ）', () => saveText(path.filter((m) => m.role === 'assistant'))),
   );
   show('#sheet');
+}
+
+async function startWith(c) {
+  const m = { id: uid(), chatId: S.chat.id, parentId: null, role: 'assistant', text: c.greeting.trim(), createdAt: Date.now() };
+  S.msgs.set(m.id, m);
+  S.chat.leafId = m.id;
+  if (!S.chat.title) S.chat.title = c.name;
+  render();
+  await Promise.all([db.put('messages', m), saveChat()]);
 }
 
 // ---------- 会話の操作 ----------
@@ -556,7 +593,7 @@ function openDrawer(keepSearch) {
 
 async function exportChat(c) {
   const messages = await db.messagesOf(c.id);
-  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats: [c], messages, chars: chatChars(c) };
+  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats: [c], messages, chars: await packChars(chatChars(c)) };
   await saveFile(new File([JSON.stringify(data)], `${(c.title || 'チャット').replace(/[\\/:*?"<>|\n]/g, '_')}.json`, { type: 'application/json' }));
 }
 
@@ -640,22 +677,34 @@ function modelEditor(c, onPick, again) {
 }
 
 function openCharSheet() {
-  $('#sheetTitle').textContent = 'このチャットで使うキャラ・設定';
+  $('#sheetTitle').textContent = 'このチャットで使うもの';
   const ids = (S.chat.charIds ||= []);
   const toggle = async (c) => {
     const i = ids.indexOf(c.id);
-    if (i >= 0) ids.splice(i, 1); else ids.push(c.id);
+    if (i >= 0) ids.splice(i, 1);
+    else {
+      if (c.type === 'hero') for (const o of S.chars) if (o.type === 'hero' && ids.includes(o.id)) ids.splice(ids.indexOf(o.id), 1);
+      ids.push(c.id);
+    }
     S.settings.lastCharIds = [...ids];
     await saveSettings();
     if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
+    applyBg();
     openCharSheet();
   };
-  $('#sheetBody').replaceChildren(
-    ...S.chars.map((c) => h('div', { class: `row ${ids.includes(c.id) ? 'on' : ''}` },
-      h('button', { class: 'plain', text: `${ids.includes(c.id) ? '✔' : '　'} ${c.name || '（名前なし）'}　〔${CHAR_TYPES[c.type || 'char'].slice(0, 4)}〕`, onclick: () => toggle(c) }))),
-    !S.chars.length && h('p', { class: 'hint', text: 'まだキャラ表がありません。下のボタンから作れます。' }),
-    h('div', { class: 'btnrow' }, h('button', { text: 'キャラ表を追加・編集する', onclick: () => openSettings('chars') })),
-  );
+  const group = (type, title) => {
+    const list = S.chars.filter((c) => (c.type || 'char') === type);
+    return [h('p', { class: 'grouphead', text: title }),
+      ...list.map((c) => h('div', { class: `row ${ids.includes(c.id) ? 'on' : ''}` },
+        h('button', { class: 'plain', text: `${ids.includes(c.id) ? '✔' : '　'} ${c.name || '（名前なし）'}`, onclick: () => toggle(c) }))),
+      !list.length && h('p', { class: 'hint', text: 'まだありません。' })];
+  };
+  $('#sheetBody').replaceChildren(...[
+    ...group('hero', '主人公（1人だけ選べます）'),
+    ...group('char', '登場人物（何人でも）'),
+    ...group('world', '世界設定（いくつでも）'),
+    h('div', { class: 'btnrow' }, h('button', { text: '追加・編集する', onclick: () => openSettings('chars') })),
+  ].filter(Boolean));
   show('#sheet');
 }
 
@@ -767,13 +816,26 @@ function promptCard(p) {
 
 function charCard(c) {
   const save = () => db.put('chars', c);
+  const type = c.type || 'char';
+  const bgPick = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async () => {
+    if (!bgPick.files[0]) return;
+    try { c.bg = await shrinkImage(bgPick.files[0]); await save(); applyBg(); renderSettings(); } catch (e) { alert(`この画像は読み込めませんでした。\n${e.message}`); }
+  } });
   const card = h('details', { class: 'card', open: S.openCard === c.id },
     h('summary', { text: c.name || '（名前なし）' }),
     field('名前', bound(c, 'name', () => { save(); card.querySelector('summary').textContent = c.name || '（名前なし）'; }, { type: 'text' })),
-    field('種類', select(c, 'type', CHAR_TYPES, save)),
-    field('核（いつも読み込む）', bound(c, 'core', save, { placeholder: '性格、口調、一人称、外見など。短くまとめます。' }, 'textarea'), 'このチャットで使うと決めたら、毎回AIに渡されます。'),
-    field('詳細（名前が出たときだけ読み込む）', bound(c, 'detail', save, { class: 'big', placeholder: '過去、人間関係、細かい設定、台詞の例など。長くても大丈夫です。' }, 'textarea'), '直近4つのメッセージに、名前か下のキーワードが出てきたときだけAIに渡されます。'),
-    field('キーワード（あだ名など。「、」で区切る）', bound(c, 'keywords', save, { type: 'text', placeholder: '例: ひよ、日和、先輩' })),
+    field('種類', select(c, 'type', CHAR_TYPES, () => { save(); renderSettings(); })),
+    type === 'hero'
+      ? field('設定', bound(c, 'core', save, { class: 'big', placeholder: '年齢、容姿、性格、立場など。話によって主人公を変えたいときは、カードを複数作って切り替えます。' }, 'textarea'), 'この主人公を選んだチャットで、毎回AIに渡されます。')
+      : field(type === 'world' ? '基本（いつも読み込む）' : '核（いつも読み込む）', bound(c, 'core', save, { placeholder: type === 'world' ? '世界のあらまし、時代、決まりごとなど。短くまとめます。' : '性格、口調、一人称、外見など。短くまとめます。' }, 'textarea'), 'このチャットで使うと決めたら、毎回AIに渡されます。'),
+    type !== 'hero' && field(type === 'world' ? '詳細（キーワードが出たときだけ読み込む）' : '詳細（名前が出たときだけ読み込む）', bound(c, 'detail', save, { class: 'big', placeholder: type === 'world' ? '地名、組織、用語、歴史など。長くても大丈夫です。' : '過去、人間関係、細かい設定、台詞の例など。長くても大丈夫です。' }, 'textarea'), '直近4つのメッセージに、名前か下のキーワードが出てきたときだけAIに渡されます。'),
+    type !== 'hero' && field('キーワード（「、」で区切る）', bound(c, 'keywords', save, { type: 'text', placeholder: type === 'world' ? '例: 王都、騎士団、魔法学院' : '例: ひよ、日和、先輩' })),
+    type === 'char' && field('始まり方（最初のメッセージ）', bound(c, 'greeting', save, { placeholder: '新しいチャットでこの人物を選ぶと、「この始まり方で始める」ボタンが出ます。空欄なら出ません。' }, 'textarea')),
+    type === 'char' && h('div', { class: 'f' }, '背景画像（この人物を使うチャットの背景）',
+      h('div', { class: 'btnrow' },
+        h('button', { text: c.bg ? '画像を変える' : '画像を選ぶ', onclick: () => bgPick.click() }),
+        c.bg && h('button', { class: 'danger', text: 'やめる', onclick: async () => { delete c.bg; await save(); applyBg(); renderSettings(); } }),
+        bgPick)),
     h('div', { class: 'btnrow' }, h('button', { class: 'danger', text: '削除', onclick: async () => {
       if (!confirm(`「${c.name}」を削除しますか？`)) return;
       S.chars = S.chars.filter((x) => x !== c);
@@ -785,9 +847,13 @@ function charCard(c) {
   return card;
 }
 
+const toDataUrl = (blob) => new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+const packChars = (list) => Promise.all(list.map(async (c) => (c.bg instanceof Blob ? { ...c, bg: await toDataUrl(c.bg) } : c)));
+const unpackChars = (list) => Promise.all(list.map(async (c) => (typeof c.bg === 'string' ? { ...c, bg: await (await fetch(c.bg)).blob() } : c)));
+
 async function exportData() {
   const [chats, messages, prompts, chars] = await Promise.all([db.all('chats'), db.all('messages'), db.all('prompts'), db.all('chars')]);
-  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats, messages, prompts, chars };
+  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats, messages, prompts, chars: await packChars(chars) };
   const name = `sousaku-backup-${new Date().toISOString().slice(0, 10)}.json`;
   const file = new File([JSON.stringify(data)], name, { type: 'application/json' });
   await saveFile(file);
@@ -809,7 +875,7 @@ async function importData(file) {
     await db.putMany('chats', data.chats || []);
     await db.putMany('messages', data.messages || []);
     await db.putMany('prompts', data.prompts || []);
-    await db.putMany('chars', data.chars || []);
+    await db.putMany('chars', await unpackChars(data.chars || []));
     await loadAll();
     if (!$('#settings').hidden) renderSettings();
     toast(`読み込みました（チャット ${data.chats?.length || 0} 件）`);
@@ -847,16 +913,23 @@ function renderSettings() {
       } }),
     );
   } else if (S.tab === 'chars') {
-    body.replaceChildren(
-      h('p', { class: 'hint', text: '登場人物・主人公・世界設定をカードにして保存します。チャット画面上部の「👤」をタップして、そのチャットで使うものを選びます。' }),
-      ...S.chars.map(charCard),
-      h('button', { class: 'wide', text: '＋ キャラ・設定を追加', onclick: async () => {
-        const c = { id: uid(), name: '新しいキャラ', type: 'char', core: '', detail: '', keywords: '', createdAt: Date.now() };
+    const section = (type, title, hint, label) => [
+      h('h3', { class: 'grouphead', text: title }),
+      h('p', { class: 'hint', text: hint }),
+      ...S.chars.filter((c) => (c.type || 'char') === type).map(charCard),
+      h('button', { class: 'wide', text: `＋ ${label}を追加`, onclick: async () => {
+        const c = { id: uid(), name: `新しい${label}`, type, core: '', detail: '', keywords: '', greeting: '', createdAt: Date.now() };
         S.chars.push(c);
         S.openCard = c.id;
         await db.put('chars', c);
         renderSettings();
       } }),
+    ];
+    body.replaceChildren(
+      h('p', { class: 'hint', text: 'ここで作ったカードを、チャット画面上部の「👤」から、そのチャットで使うものだけ選びます。' }),
+      ...section('hero', '主人公', '自分が演じる・語る人物。話によって変えたいときは複数作って、チャットごとに1人選びます。', '主人公'),
+      ...section('char', '登場人物', '相手役や脇役。人数が多くても、詳細は名前が出た人の分だけ読み込まれます。', '登場人物'),
+      ...section('world', '世界設定', '舞台や用語。キーワードが出たときだけ詳細を読み込みます（他のアプリの「ロアブック」と同じ働きです）。', '世界設定'),
     );
   } else if (S.tab === 'ui') {
     const ui = S.settings.ui;
@@ -887,8 +960,9 @@ function renderSettings() {
           h('button', { text: S.hasBg ? '画像を変える' : '画像を選ぶ', onclick: () => bgPicker.click() }),
           S.hasBg && h('button', { class: 'danger', text: '背景をやめる', onclick: async () => { await db.del('kv', 'bg'); S.hasBg = await applyBg(); renderSettings(); } }),
           bgPicker),
-        S.hasBg && field(`背景の薄さ（${ui.bgVeil}％）`, range('bgVeil', 0, 100), '大きいほど画像が薄くなり、文字が読みやすくなります。'),
-        S.hasBg && field(`吹き出しの濃さ（${ui.bubbleAlpha}％）`, range('bubbleAlpha', 20, 100), '小さいほど吹き出しが透けて、背景が見えます。')),
+        field(`背景の薄さ（${ui.bgVeil}％）`, range('bgVeil', 0, 100), '大きいほど画像が薄くなり、文字が読みやすくなります。'),
+        h('div', { class: 'hint', text: 'ここで選ぶのは全体の背景です。登場人物のカードに背景画像を付けると、その人物を使うチャットではそちらが優先されます。' }),
+        field(`吹き出しの濃さ（${ui.bubbleAlpha}％）`, range('bubbleAlpha', 20, 100), '小さいほど吹き出しが透けて、背景が見えます。')),
       h('div', { class: 'card' },
         h('strong', { text: '画像URLの短縮書き' }),
         h('div', { class: 'hint', text: 'ベースURLを入れておくと、AIが [[ひより/笑顔]] と書いただけで画像として表示します。プロンプトには「画像は [[キャラ名/表情]] の形で書く」と指示してください。空欄なら使いません。' }),
