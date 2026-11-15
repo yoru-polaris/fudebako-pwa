@@ -30,7 +30,8 @@ button:disabled { opacity: .5; }
   border-bottom: 1px solid var(--line); background: var(--panel); }
 #titleBox { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
 #chatTitle { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chip { align-self: flex-start; max-width: 100%; font-size: 12px; padding: 1px 10px; border-radius: 999px;
+#chips { display: flex; gap: 6px; min-width: 0; }
+.chip { flex: 0 1 auto; min-width: 0; font-size: 12px; padding: 1px 10px; border-radius: 999px;
   color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 #messages { flex: 1; overflow-y: auto; padding: 14px 14px 24px; -webkit-overflow-scrolling: touch; }
@@ -81,11 +82,14 @@ textarea, input[type=text], input[type=password], input[type=number], select {
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
 .card > summary { font-weight: 600; cursor: pointer; }
 .card.active { border-color: var(--accent); }
-label.f { display: block; margin-top: 10px; font-size: 13px; color: var(--sub); }
-label.f > * { margin-top: 2px; color: var(--text); font-size: 16px; }
+label.f, div.f { display: block; margin-top: 10px; font-size: 13px; color: var(--sub); }
+label.f > *, div.f > * { margin-top: 2px; color: var(--text); font-size: 16px; }
 label.chk { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 label.chk input { width: 20px; height: 20px; }
 .hint { font-size: 13px; color: var(--sub); margin: 6px 0; }
+.addrow { display: flex; gap: 8px; margin-top: 8px; }
+.addrow input { flex: 1; min-width: 0; }
+.addrow button { white-space: nowrap; }
 .btnrow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .result { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; margin-top: 8px; }
 textarea.big { min-height: 40dvh; }

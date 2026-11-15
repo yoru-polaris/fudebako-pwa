@@ -36,9 +36,11 @@ const saveSettings = () => db.kvSet('settings', S.settings);
 const activeConn = () => S.settings.connections.find((c) => c.id === S.settings.activeConnId);
 const promptOf = (id) => S.prompts.find((p) => p.id === id);
 
+const DEFAULT_MODELS = ['gemini-3.1-pro-preview', 'gemini-3.5-flash-lite', 'gemini-4-hydrogen', 'gemini-4-argon', 'gemini-4-carbon'];
+
 function newConn() {
   return {
-    id: uid(), name: 'Vertex AI', type: 'vertex', apiKey: '', baseUrl: '', model: '',
+    id: uid(), name: 'Vertex AI', type: 'vertex', apiKey: '', baseUrl: '', model: DEFAULT_MODELS[0], models: [...DEFAULT_MODELS],
     temperature: '', maxTokens: '', thinkMode: 'none', thinkBudget: '', thinkLevel: 'high',
     showThoughts: false, safety: 'default',
   };
@@ -196,6 +198,7 @@ function messageEl(m) {
 function render() {
   $('#chatTitle').textContent = S.chat.title || '新しいチャット';
   $('#promptChip').textContent = `プロンプト：${promptOf(S.chat.promptId)?.name || 'なし'}`;
+  $('#modelChip').textContent = activeConn()?.model || 'モデル未選択';
   $('#btnImages').classList.toggle('off', !S.settings.showImages);
   $('#btnSend').textContent = S.busy ? '停止' : '送信';
 
@@ -378,6 +381,43 @@ function openPromptSheet() {
   show('#sheet');
 }
 
+function modelEditor(c, onPick, again) {
+  const input = h('input', { type: 'text', placeholder: 'モデル名を入力して追加', autocapitalize: 'off', autocorrect: 'off' });
+  const choose = (name) => {
+    c.model = name;
+    saveSettings();
+    if (onPick) onPick(); else again();
+  };
+  const add = () => {
+    const name = input.value.trim();
+    if (!name) return;
+    if (!c.models.includes(name)) c.models.push(name);
+    choose(name);
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  const current = (name) => c.model === name && (!onPick || c.id === S.settings.activeConnId);
+  return h('div', {},
+    c.models.map((name) => h('div', { class: `row ${current(name) ? 'on' : ''}` },
+      h('button', { class: 'plain', text: `${current(name) ? '✔ ' : ''}${name}`, onclick: () => choose(name) }),
+      h('button', { class: 'iconbtn', text: '✕', 'aria-label': '一覧から消す', onclick: () => {
+        c.models = c.models.filter((x) => x !== name);
+        if (c.model === name) c.model = c.models[0] || '';
+        saveSettings();
+        again();
+      } }))),
+    h('div', { class: 'addrow' }, input, h('button', { text: '追加', onclick: add })));
+}
+
+function openModelSheet() {
+  $('#sheetTitle').textContent = 'モデルを選ぶ';
+  const many = S.settings.connections.length > 1;
+  $('#sheetBody').replaceChildren(...S.settings.connections.flatMap((c) => [
+    many && h('p', { class: 'hint', text: c.name || '（名前なし）' }),
+    modelEditor(c, () => { S.settings.activeConnId = c.id; saveSettings(); closePanels(); }, openModelSheet),
+  ]).filter(Boolean));
+  show('#sheet');
+}
+
 // ---------- 設定 ----------
 function field(label, control, hint) {
   return h('label', { class: 'f' }, label, control, hint && h('div', { class: 'hint', text: hint }));
@@ -423,7 +463,7 @@ function connCard(c) {
     field('種類', select(c, 'type', CONN_TYPES, saveSettings, again)),
     field('APIキー', bound(c, 'apiKey', saveSettings, { type: 'password', autocomplete: 'off' }), 'この端末の中だけに保存されます。'),
     !isGemini && field('接続先URL', bound(c, 'baseUrl', saveSettings, { type: 'text', placeholder: DEFAULT_BASE_URL, inputMode: 'url' }), '空欄ならOpenRouterにつなぎます。'),
-    field('モデル名', bound(c, 'model', saveSettings, { type: 'text', placeholder: isGemini ? '例: gemini-2.5-pro' : '例: google/gemini-2.5-pro', autocapitalize: 'off', autocorrect: 'off' })),
+    h('div', { class: 'f' }, 'モデル（タップで選ぶ。チャット画面上部のモデル名からも切り替えられます）', modelEditor(c, null, again)),
     field('温度（空欄＝おまかせ）', bound(c, 'temperature', saveSettings, { type: 'number', step: '0.1', min: '0', max: '2', inputMode: 'decimal' }), '高いほど自由で意外な文章、低いほど安定した文章になります。'),
     field('最大出力トークン（空欄＝おまかせ）', bound(c, 'maxTokens', saveSettings, { type: 'number', min: '1', inputMode: 'numeric' })),
     field('思考の設定', select(c, 'thinkMode', { none: '指定しない', budget: '思考予算（トークン数）で指定', level: '思考レベルで指定' }, saveSettings, again)),
@@ -553,6 +593,10 @@ function resizeInput() {
 async function loadAll() {
   const [settings, prompts, chats] = await Promise.all([db.kvGet('settings'), db.all('prompts'), db.all('chats')]);
   Object.assign(S.settings, settings);
+  for (const c of S.settings.connections) {
+    if (!Array.isArray(c.models)) c.models = c.type === 'openai' ? [] : [...DEFAULT_MODELS];
+    if (c.model && !c.models.includes(c.model)) c.models.unshift(c.model);
+  }
   S.prompts = prompts.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   S.chats = chats;
   if (!S.settings.connections.length) {
@@ -573,6 +617,7 @@ $('#btnDrawer').addEventListener('click', openDrawer);
 $('#btnNewChat').addEventListener('click', async () => { await openChat(blankChat()); closePanels(); });
 $('#btnSettings').addEventListener('click', () => openSettings());
 $('#promptChip').addEventListener('click', openPromptSheet);
+$('#modelChip').addEventListener('click', openModelSheet);
 $('#btnImages').addEventListener('click', () => {
   S.settings.showImages = !S.settings.showImages;
   saveSettings();
