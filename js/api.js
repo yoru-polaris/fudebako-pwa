@@ -36,7 +36,7 @@ async function* sse(resp) {
 }
 
 const HINTS = {
-  400: 'リクエストの内容が受け付けられませんでした。モデル名や思考の設定を確認してください。',
+  400: 'リクエストの内容が受け付けられませんでした。温度や思考の設定がこのモデルに合っていない可能性があります。温度を空欄に、思考の設定を「指定しない」にして試してください。',
   401: 'APIキーが正しくないか、この接続先では使えないキーです。',
   403: 'このキーには権限がありません。APIが有効になっているか確認してください。',
   404: 'モデル名が見つかりません。モデル名のつづりを確認してください。',
@@ -91,7 +91,7 @@ async function* gemini(conn, { system, messages, signal }) {
   if (num(conn.maxTokens) !== undefined) generationConfig.maxOutputTokens = num(conn.maxTokens);
   const thinking = {};
   if (conn.thinkMode === 'budget' && num(conn.thinkBudget) !== undefined) thinking.thinkingBudget = num(conn.thinkBudget);
-  if (conn.thinkMode === 'level' && conn.thinkLevel) thinking.thinkingLevel = conn.thinkLevel;
+  if (conn.thinkMode === 'level' && conn.thinkLevel) thinking.thinkingLevel = conn.thinkLevel.toUpperCase();
   if (conn.showThoughts) thinking.includeThoughts = true;
   if (Object.keys(thinking).length) generationConfig.thinkingConfig = thinking;
 
