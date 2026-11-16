@@ -27,7 +27,7 @@ const S = {
   chars: [],
   chats: [],
   chat: null,
-  msgs: new Map(),
+  msgs: new Map(),  // openChat で MsgMap に差し替える
   busy: false,
   pending: [],
   abort: null,
@@ -78,10 +78,10 @@ function fillNames(chat, text) {
   const chars = chatChars(chat);
   const hero = chars.find((c) => c.type === 'hero')?.name;
   const cast = chars.find((c) => (c.type || 'char') === 'char')?.name;
-  if (cast) text = text.replace(/\{\{char\}\}/gi, cast);
+  if (cast) text = text.replace(/\{\{char\}\}/gi, () => cast);
   if (hero) {
-    text = text.replace(/\{\{user\}\}/gi, hero);
-    if (S.settings.ui.replaceUser) text = text.replace(/(?<![A-Za-z])User(?![A-Za-z])/g, hero);
+    text = text.replace(/\{\{user\}\}/gi, () => hero);
+    if (S.settings.ui.replaceUser) text = text.replace(/(^|[^A-Za-z])User(?![A-Za-z])/g, (_, pre) => pre + hero);
   }
   return text;
 }
@@ -125,8 +125,24 @@ function blankChat() {
 }
 
 // ---------- 会話の木 ----------
-const childrenOf = (parentId) =>
-  [...S.msgs.values()].filter((m) => m.parentId === parentId).sort((a, b) => a.createdAt - b.createdAt);
+// 親ごとの子メッセージ一覧。メッセージの追加・削除があったときだけ作り直す。
+let kidsIndex = null;
+class MsgMap extends Map {
+  set(k, v) { kidsIndex = null; return super.set(k, v); }
+  delete(k) { kidsIndex = null; return super.delete(k); }
+}
+function childrenOf(parentId) {
+  if (!kidsIndex) {
+    kidsIndex = new Map();
+    for (const m of S.msgs.values()) {
+      const key = m.parentId ?? null;
+      if (!kidsIndex.has(key)) kidsIndex.set(key, []);
+      kidsIndex.get(key).push(m);
+    }
+    for (const list of kidsIndex.values()) list.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  return kidsIndex.get(parentId ?? null) || [];
+}
 
 function pathTo(id) {
   const out = [];
@@ -165,7 +181,8 @@ async function openChat(chat) {
   S.chat = chat;
   S.error = '';
   S.editing = null;
-  S.msgs = new Map((await db.messagesOf(chat.id)).map((m) => [m.id, m]));
+  S.msgs = new MsgMap((await db.messagesOf(chat.id)).map((m) => [m.id, m]));
+  kidsIndex = null;
   if (S.chats.includes(chat)) { S.settings.lastChatId = chat.id; saveSettings(); }
   render();
   scrollBottom();
@@ -488,7 +505,7 @@ function openSummary() {
   const done = chat.summary ? path.findIndex((m) => m.id === chat.summary.uptoId) + 1 : 0;
   const saveChatOnly = () => (S.chats.includes(chat) ? db.put('chats', chat) : null);
   const ta = h('textarea', { class: 'big', value: chat.summary?.text || '', placeholder: 'まだ要約はありません。' });
-  ta.addEventListener('change', () => { if (chat.summary) { chat.summary.text = ta.value; saveChatOnly(); } });
+  ta.addEventListener('input', () => { if (chat.summary) { chat.summary.text = ta.value; saveChatOnly(); } });
   const models = { '': '本文と同じモデルを使う' };
   for (const c of S.settings.connections) for (const name of c.type === 'dummy' ? ['ダミーAI'] : c.models) models[`${c.id}|${name}`] = `${c.name} / ${name}`;
   const pick = h('select', {}, Object.entries(models).map(([value, text]) => h('option', { value, text })));
@@ -739,6 +756,7 @@ function show(sel) {
 }
 
 function closePanels() {
+  flushSaves();
   PANELS.forEach((p) => ($(p).hidden = true));
   $('#backdrop').hidden = true;
   render();
@@ -805,6 +823,7 @@ async function duplicateChat(c) {
   const msgs = await db.messagesOf(c.id);
   const ids = new Map(msgs.map((m) => [m.id, uid()]));
   const copy = { ...c, id: uid(), title: `${c.title || '無題'}（複製）`, createdAt: Date.now(), updatedAt: Date.now(), leafId: ids.get(c.leafId) ?? null };
+  if (c.summary) copy.summary = { ...c.summary, uptoId: ids.get(c.summary.uptoId) };
   await db.putMany('messages', msgs.map((m) => ({ ...m, id: ids.get(m.id), chatId: copy.id, parentId: m.parentId ? ids.get(m.parentId) : null })));
   await db.put('chats', copy);
   S.chats.unshift(copy);
@@ -932,9 +951,22 @@ function field(label, control, hint) {
 
 function bound(obj, key, save, props = {}, tag = 'input') {
   const el = h(tag, { ...props, value: obj[key] ?? '' });
-  el.addEventListener('change', () => { obj[key] = el.value; save(); });
+  // iPhoneでは入力欄からフォーカスが外れないまま画面を閉じられることがあるので、
+  // 入力のたびに値を反映し、少し待ってから保存する。
+  let timer = 0;
+  const flush = () => { clearTimeout(timer); pendingSaves.delete(flush); save(); };
+  el.addEventListener('input', () => {
+    obj[key] = el.value;
+    clearTimeout(timer);
+    pendingSaves.add(flush);
+    timer = setTimeout(flush, 700);
+  });
+  el.addEventListener('change', () => { obj[key] = el.value; flush(); });
   return el;
 }
+
+const pendingSaves = new Set();
+const flushSaves = () => [...pendingSaves].forEach((f) => f());
 
 function select(obj, key, options, save, after) {
   const el = h('select', {}, Object.entries(options).map(([value, text]) => h('option', { value, text })));
@@ -967,7 +999,7 @@ function connCard(c) {
 
   const card = h('details', { class: `card ${isActive ? 'active' : ''}`, open: S.openCard === c.id },
     h('summary', { text: `${c.name || '（名前なし）'}${isActive ? '　✔ 使用中' : ''}` }),
-    field('名前', bound(c, 'name', () => { saveSettings(); again(); }, { type: 'text' })),
+    field('名前', bound(c, 'name', () => { saveSettings(); card.querySelector('summary').textContent = `${c.name || '（名前なし）'}${isActive ? '　✔ 使用中' : ''}`; }, { type: 'text' })),
     field('種類', select(c, 'type', CONN_TYPES, saveSettings, again)),
     !isDummy && field('APIキー', bound(c, 'apiKey', saveSettings, { type: 'password', autocomplete: 'off' }), 'この端末の中だけに保存されます。'),
     !isDummy && !isGemini && field('接続先URL', bound(c, 'baseUrl', saveSettings, { type: 'text', placeholder: DEFAULT_BASE_URL, inputMode: 'url' }), '空欄ならOpenRouterにつなぎます。'),
@@ -1135,6 +1167,7 @@ async function importData(file) {
 }
 
 function renderSettings() {
+  flushSaves();
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.tab));
   const body = $('#settingsBody');
   if (S.tab === 'conn') {
@@ -1358,6 +1391,7 @@ $('#backdrop').addEventListener('click', closePanels);
 document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', closePanels));
 document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => { S.tab = b.dataset.tab; S.openCard = null; renderSettings(); }));
 
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 loadAll();
