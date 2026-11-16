@@ -81,13 +81,14 @@ const BLOCK_REASONS = {
   OTHER: '不明な理由で止められました',
 };
 
-async function* gemini(conn, { system, messages, signal }) {
+async function* gemini(conn, { system, messages, signal, json }) {
   const model = encodeURIComponent(conn.model.trim());
   const url = conn.type === 'vertex'
     ? `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:streamGenerateContent?alt=sse`
     : `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
 
   const generationConfig = {};
+  if (json) generationConfig.responseMimeType = 'application/json';
   if (num(conn.temperature) !== undefined) generationConfig.temperature = num(conn.temperature);
   if (num(conn.maxTokens) !== undefined) generationConfig.maxOutputTokens = num(conn.maxTokens);
   const thinking = {};
@@ -126,11 +127,12 @@ async function* gemini(conn, { system, messages, signal }) {
   }
 }
 
-async function* openai(conn, { system, messages, signal }) {
+async function* openai(conn, { system, messages, signal, json }) {
   const base = (conn.baseUrl || DEFAULT_BASE_URL).trim().replace(/\/+$/, '');
   const body = {
     model: conn.model.trim(),
     stream: true,
+    ...(json ? { response_format: { type: 'json_object' } } : {}),
     messages: [
       ...(system ? [{ role: 'system', content: system }] : []),
       ...messages.map((m) => ({
@@ -159,9 +161,9 @@ async function* openai(conn, { system, messages, signal }) {
   }
 }
 
-async function* dummy(conn, { messages, signal }) {
+async function* dummy(conn, { messages, signal, json, sample }) {
   const last = messages.at(-1)?.text || '';
-  const text = conn.dummyText?.trim() || `これはダミーAIの返事です。通信はしていません。\n\n受け取った文章（${messages.length}件目）:\n${last}`;
+  const text = (json && sample) || conn.dummyText?.trim() || `これはダミーAIの返事です。通信はしていません。\n\n受け取った文章（${messages.length}件目）:\n${last}`;
   for (let i = 0; i < text.length; i += 4) {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
     await new Promise((r) => setTimeout(r, 30));

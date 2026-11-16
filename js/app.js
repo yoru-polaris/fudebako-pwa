@@ -1,5 +1,6 @@
 import { db, uid } from './db.js';
 import { streamChat, CONN_TYPES, DEFAULT_BASE_URL } from './api.js';
+import { initPhone } from './phone.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -601,6 +602,7 @@ function openChatMenu() {
       closePanels();
     }),
     item('book', `今回の話${S.chat.note?.trim() ? '（設定あり）' : ''}`, openNote),
+    item('phone', 'スマホをのぞく', phone.openPeekSheet),
     item('branch', '分岐ツリー', openTree),
     item('summary', `あらすじ（要約）${S.chat.summary ? (S.chat.summaryOn === false ? '（オフ）' : '（あり）') : ''}`, openSummary),
     item('fold', 'すべてたたむ', () => foldAll(true)),
@@ -794,7 +796,7 @@ async function removeMessage(m) {
 }
 
 // ---------- パネル ----------
-const PANELS = ['#drawer', '#sheet', '#settings'];
+const PANELS = ['#drawer', '#sheet', '#settings', '#phone'];
 
 function show(sel) {
   PANELS.forEach((p) => ($(p).hidden = p !== sel));
@@ -1469,4 +1471,5 @@ document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('cli
 document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+const phone = initPhone({ $, h, icon, ICONS, S, db, streamChat, uid, pathTo, chatChars, buildSystem, summaryCut, apiMessage, activeConn, modelLabel, show, closePanels, toast, stamp });
 loadAll().catch(showFatal);
