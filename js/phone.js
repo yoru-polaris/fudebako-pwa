@@ -107,7 +107,7 @@ export function initPhone(x) {
     const hero = x.chatChars(chat).find((c) => c.type === 'hero')?.name || 'ユーザー';
     const cut = x.summaryCut(chat, path);
     const { system } = x.buildSystem(chat, `${path.slice(-4).map((m) => m.text).join('\n')}\n${name || ''}`, cut ? chat.summary.text : '');
-    const talk = path.slice(cut).map((m) => `【${m.role === 'user' ? hero : '語り・相手役'}】\n${x.apiMessage(m).text}`).join('\n\n');
+    const talk = path.slice(cut).filter((m) => !m.side).map((m) => `【${m.role === 'user' ? hero : '語り・相手役'}】\n${x.apiMessage(m).text}`).join('\n\n');
     const who = name || '会話の主な相手役（あなたが判断する）';
     const input = `# 設定\n${system || '（なし）'}\n\n# これまでの会話\n${talk}\n\n# 依頼\n${who} のスマホの中身を作ってください。`;
     const conn = { ...x.activeConn(), tailUser: '', tailModel: '' };

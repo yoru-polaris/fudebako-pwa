@@ -1,6 +1,7 @@
 import { db, uid } from './db.js';
 import { streamChat, CONN_TYPES, DEFAULT_BASE_URL } from './api.js';
 import { initPhone } from './phone.js';
+import { DEFAULT_INSERTS } from './inserts.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -332,7 +333,8 @@ function messageEl(m, index) {
     S.toolsFor = S.toolsFor === m.id ? null : m.id;
     render();
   };
-  const bubble = h('div', { class: `bubble ${m.collapsed ? 'folded' : ''}`, onclick: m.collapsed ? (S.busy ? null : fold) : tapTools });
+  const bubble = h('div', { class: `bubble ${m.collapsed ? 'folded' : ''} ${m.side ? 'side' : ''}`, onclick: m.collapsed ? (S.busy ? null : fold) : tapTools });
+  if (m.side) bubble.append(h('div', { class: 'sidetag' }, icon('spark'), `番外：${m.sideName || '差し込み'}`));
   if (ui.showMeta) bubble.append(h('div', { class: 'meta', text: [`#${index + 1}`, m.model, new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' / ') }));
   if (m.collapsed) {
     bubble.append(h('div', { class: 'body', text: expandImages(m.text).replace(IMG_URL, '〔画像〕').trim().slice(0, 200) }));
@@ -361,7 +363,8 @@ function messageEl(m, index) {
     }
     tools.append(h('button', { class: 'sym c-fold', text: m.collapsed ? '▸' : '▾', 'aria-label': m.collapsed ? 'ひらく' : 'たたむ', onclick: fold }));
     if (m.role === 'assistant' && m.id === S.chat.leafId) tools.append(h('button', { class: 'c-go', text: '続き', onclick: () => continueFrom(m) }));
-    if (m.role === 'assistant') tools.append(h('button', { class: 'c-retry', text: '再生成', onclick: () => generate(m.parentId) }));
+    if (m.side) tools.append(h('button', { class: 'c-retry', text: 'やり直す', onclick: () => runInsert({ name: m.sideName, text: m.sideText || '', mode: 'side' }, m.parentId) }));
+    else if (m.role === 'assistant') tools.append(h('button', { class: 'c-retry', text: '再生成', onclick: () => generate(m.parentId) }));
     tools.append(
       h('button', { class: 'c-edit', text: '編集', onclick: () => { S.editing = m.id; render(); } }),
       h('button', { class: 'c-copy', text: 'コピー', onclick: () => navigator.clipboard.writeText(m.text).then(() => toast('コピーしました')) }),
@@ -555,7 +558,7 @@ async function summarize(manual) {
     if (manual) alert(`まだ要約するほど長くありません。\n直近 ${keep} 件はそのまま残し、それより前を要約します。`);
     return;
   }
-  const body = path.slice(done, end).map((m) => `${m.role === 'user' ? '【ユーザー】' : '【AI】'}\n${apiMessage(m).text}`).join('\n\n');
+  const body = path.slice(done, end).filter((m) => !m.side).map((m) => `${m.role === 'user' ? '【ユーザー】' : '【AI】'}\n${apiMessage(m).text}`).join('\n\n');
   const input = `${done ? `# これまでのあらすじ\n${chat.summary.text}\n\n` : ''}# 続きの本文\n${body}`;
   S.summarizing = true;
   if (!manual) toast('古い部分を要約しています…');
@@ -692,6 +695,33 @@ async function addFiles(files) {
   renderPending();
 }
 
+// 差し込みプロンプトを実行する。side は番外（履歴に入れない）、steer は本編の続きとして出す。
+function runInsert(ins, parentId = S.chat.leafId ?? null) {
+  if (S.busy) return;
+  const text = fillNames(S.chat, ins.text).replace(/\{\{char\}\}/gi, '相手役').replace(/\{\{user\}\}/gi, 'ユーザー');
+  if (ins.mode === 'steer') return generate(parentId, { extraUser: `（次の指示に沿って、本編の続きを書いてください。この指示文そのものには触れないこと）\n${text}` });
+  return generate(parentId, {
+    extraUser: `（これは本編には残らない番外の出力です。本編の続きは書かず、次の指示の内容だけを出力してください）\n\n${text}`,
+    side: { name: ins.name, text: ins.text },
+  });
+}
+
+function openInsertSheet() {
+  $('#sheetTitle').textContent = '差し込み';
+  const list = S.settings.inserts;
+  const group = (mode, title, hint) => {
+    const items = list.filter((i) => (i.mode || 'side') === mode);
+    return items.length ? [h('p', { class: 'grouphead', text: title }), h('p', { class: 'hint', text: hint }),
+      ...items.map((i) => h('div', { class: 'row' }, h('button', { class: 'plain withic', onclick: () => { closePanels(); runInsert(i); } }, icon(mode === 'side' ? 'spark' : 'branch'), i.name || '（名前なし）')))] : [];
+  };
+  $('#sheetBody').replaceChildren(
+    ...group('side', '番外として見る', '本編とは別枠で出します。相手には知られず、この先の会話にも影響しません。'),
+    ...group('steer', '本編に反映する', '見えない指示として送り、返事は本編の続きになります。'),
+    h('div', { class: 'btnrow' }, h('button', { text: '追加・編集する', onclick: () => openSettings('prompts') })),
+  );
+  show('#sheet');
+}
+
 const continueFrom = (m) => generate(m.id, { extraUser: S.settings.ui.continueText.trim() || '続きを書いてください。' });
 
 async function generate(parentId, opts = {}) {
@@ -700,7 +730,7 @@ async function generate(parentId, opts = {}) {
   const fullPath = pathTo(parentId);
   let cut = summaryCut(S.chat, [...fullPath, {}]);
   if (cut >= fullPath.length) cut = 0;
-  const history = fullPath.slice(cut).map(apiMessage);
+  const history = fullPath.slice(cut).filter((x) => !x.side).map(apiMessage);
   const { system, loaded } = buildSystem(S.chat, history.slice(-4).map((x) => x.text).join('\n'), cut ? S.chat.summary.text : '');
   if (opts.extraUser) history.push({ role: 'user', text: opts.extraUser });
   if (conn?.tailUser?.trim()) history.push({ role: 'user', text: conn.tailUser });
@@ -709,6 +739,7 @@ async function generate(parentId, opts = {}) {
   let got = false;
   const m = { id: uid(), chatId: S.chat.id, parentId, role: 'assistant', text: prefill && conn.tailJoin ? prefill : '', thought: '', createdAt: Date.now() };
   if (loaded.length) m.loaded = loaded;
+  if (opts.side) Object.assign(m, { side: true, sideName: opts.side.name, sideText: opts.side.text });
   m.model = modelLabel(conn) + (S.settings.connections.length > 1 && conn?.type !== 'dummy' ? `（${conn.name}）` : '');
   const chat = S.chat;
   S.msgs.set(m.id, m);
@@ -816,6 +847,17 @@ async function saveEdit(m, text, asBranch) {
 }
 
 async function removeMessage(m) {
+  if (m.side) {
+    if (!S.settings.ui.skipDeleteConfirm && !confirm('この番外を削除しますか？\nこのあとに続く会話は残ります。')) return;
+    const kids = childrenOf(m.id);
+    kids.forEach((k) => { k.parentId = m.parentId; });
+    S.msgs.delete(m.id);
+    if (S.chat.leafId === m.id) S.chat.leafId = m.parentId;
+    S.error = '';
+    render();
+    await Promise.all([db.putMany('messages', kids), db.del('messages', m.id), saveChat()]);
+    return;
+  }
   const ids = subtree(m.id);
   const more = ids.length > 1 ? `\nこの先に続く ${ids.length - 1} 件も一緒に消えます。` : '';
   if (!S.settings.ui.skipDeleteConfirm && !confirm(`このメッセージを削除しますか？${more}`)) return;
@@ -1117,6 +1159,23 @@ function connCard(c) {
   return card;
 }
 
+function insertCard(i) {
+  const card = h('details', { class: 'card', open: S.openCard === i.id },
+    h('summary', { text: i.name || '（名前なし）' }),
+    field('名前', bound(i, 'name', () => { saveSettings(); card.querySelector('summary').textContent = i.name || '（名前なし）'; }, { type: 'text' })),
+    field('出し方', select(i, 'mode', { side: '番外として別枠に出す（会話には影響しない）', steer: '本編に反映する（返事が続きになる）' }, saveSettings)),
+    field('指示', bound(i, 'text', saveSettings, { class: 'big' }, 'textarea')),
+    h('div', { class: 'btnrow' }, h('button', { class: 'danger', text: '削除', onclick: () => {
+      if (!confirm(`「${i.name}」を削除しますか？`)) return;
+      S.settings.inserts = S.settings.inserts.filter((x) => x !== i);
+      saveSettings();
+      renderSettings();
+    } })),
+  );
+  card.addEventListener('toggle', () => { if (card.open) S.openCard = i.id; else if (S.openCard === i.id) S.openCard = null; });
+  return card;
+}
+
 function promptCard(p) {
   const save = () => db.put('prompts', p);
   const card = h('details', { class: 'card', open: S.openCard === p.id },
@@ -1237,7 +1296,7 @@ async function exportData() {
   const [chats, messages, prompts, chars] = await Promise.all([db.all('chats'), db.all('messages'), db.all('prompts'), db.all('chars')]);
   // 巨大な1本の文字列を作るとメモリ不足で失敗しやすいので、1件ずつ小分けにしてファイルにする
   const parts = [`{"app":"sousaku-pwa","version":1,"exportedAt":"${new Date().toISOString()}"`];
-  for (const [key, list] of Object.entries({ chats, messages, prompts, chars: await packChars(chars) })) {
+  for (const [key, list] of Object.entries({ chats, messages, prompts, chars: await packChars(chars), inserts: S.settings.inserts })) {
     parts.push(`,"${key}":[`);
     list.forEach((item, i) => parts.push((i ? ',' : '') + JSON.stringify(item)));
     parts.push(']');
@@ -1262,6 +1321,11 @@ async function importData(file) {
     await db.putMany('chats', data.chats || []);
     await db.putMany('messages', data.messages || []);
     await db.putMany('prompts', data.prompts || []);
+    for (const ins of data.inserts || []) {
+      const i = S.settings.inserts.findIndex((x) => x.id === ins.id);
+      if (i >= 0) S.settings.inserts[i] = ins; else S.settings.inserts.push(ins);
+    }
+    if (data.inserts?.length) await saveSettings();
     await db.putMany('chars', await unpackChars(data.chars || []));
     await loadAll();
     if (!$('#settings').hidden) renderSettings();
@@ -1298,6 +1362,24 @@ function renderSettings() {
         S.openCard = p.id;
         await db.put('prompts', p);
         renderSettings();
+      } }),
+      h('h3', { class: 'grouphead', text: '差し込みプロンプト' }),
+      h('p', { class: 'hint', text: '会話の途中で、入力欄の左の ✦ から呼び出す指示です。日記・夢・掲示板のような番外や、「エンディングへ向かう」のような進行の指示を登録しておけます。{{char}} は登場人物、{{user}} は主人公の名前に置き換わります。' }),
+      ...S.settings.inserts.map(insertCard),
+      h('button', { class: 'wide', text: '＋ 差し込みプロンプトを追加', onclick: () => {
+        const i = { id: uid(), name: '新しい差し込み', mode: 'side', text: '' };
+        S.settings.inserts.push(i);
+        S.openCard = i.id;
+        saveSettings();
+        renderSettings();
+      } }),
+      h('button', { class: 'wide', style: 'margin-top:8px', text: '見本を追加し直す', onclick: () => {
+        const have = new Set(S.settings.inserts.map((i) => i.name));
+        const add = DEFAULT_INSERTS.filter((i) => !have.has(i.name)).map((i) => ({ id: uid(), ...i }));
+        S.settings.inserts.push(...add);
+        saveSettings();
+        renderSettings();
+        toast(add.length ? `${add.length} 件追加しました` : '見本はすべて入っています');
       } }),
     );
   } else if (S.tab === 'chars') {
@@ -1439,6 +1521,7 @@ async function loadAll() {
   const uiDefaults = S.settings.ui;
   Object.assign(S.settings, settings);
   S.settings.ui = { ...uiDefaults, ...settings?.ui };
+  if (!Array.isArray(S.settings.inserts)) S.settings.inserts = DEFAULT_INSERTS.map((i) => ({ id: uid(), ...i }));
   S.settings.summary = { connId: '', model: '', auto: false, threshold: 40, keep: 10, ...settings?.summary };
   applyUi();
   const hasBg = await applyBg();
@@ -1481,6 +1564,7 @@ $('#messages').addEventListener('scroll', () => {
   clearTimeout(jumpTimer);
   jumpTimer = setTimeout(() => document.querySelectorAll('.jump').forEach((b) => b.classList.remove('show')), 2500);
 }, { passive: true });
+$('#btnInsert').addEventListener('click', openInsertSheet);
 $('#btnAttach').addEventListener('click', () => {
   const el = h('input', { type: 'file', accept: 'image/*,.txt,.md,text/plain,text/markdown', multiple: true, onchange: () => addFiles(el.files) });
   el.click();

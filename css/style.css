@@ -326,3 +326,8 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .ph-post p { margin: 0 0 6px; white-space: pre-wrap; line-height: 1.6; font-size: 15px; }
 .ph-post small { display: flex; justify-content: space-between; align-items: center; color: #7f808b; font-size: 12px; }
 .ph-post small span { display: inline-flex; align-items: center; gap: 4px; } .ph-post .ic { width: 13px; height: 13px; }
+#btnInsert { align-self: flex-end; padding: 6px 2px; min-width: 34px; }
+#composer { gap: 4px; } #composer #input { margin: 0 4px; }
+.bubble.side { border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
+.sidetag { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
+.sidetag .ic { width: 13px; height: 13px; margin-right: 4px; }
