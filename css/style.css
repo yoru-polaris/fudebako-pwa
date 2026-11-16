@@ -313,3 +313,6 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 #toast { bottom: calc(var(--vb, 0px) + 110px); }
 #connTag { font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 6px; flex: none; background: color-mix(in srgb, currentColor 24%, transparent); }
 #promptChip { flex: 1 1 0; } #modelChip { flex: 1.7 1 0; }
+.meta.usage { margin: 6px 0 0; }
+.usagegrid { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin-top: 8px; font-size: 14px; }
+.usagegrid span { color: var(--sub); } .usagegrid b { font-weight: 600; text-align: right; }

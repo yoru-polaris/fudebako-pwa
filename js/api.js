@@ -117,6 +117,8 @@ async function* gemini(conn, { system, messages, signal, json }) {
     if (chunk.error) throw new Error(`エラー\n${chunk.error.message || JSON.stringify(chunk.error)}`);
     const block = chunk.promptFeedback?.blockReason;
     if (block) yield { notice: `入力が${BLOCK_REASONS[block] || block}` };
+    const u = chunk.usageMetadata;
+    if (u) yield { usage: { in: u.promptTokenCount || 0, out: u.candidatesTokenCount || 0, think: u.thoughtsTokenCount || 0, cached: u.cachedContentTokenCount || 0 } };
     const cand = chunk.candidates?.[0];
     for (const part of cand?.content?.parts || []) {
       if (!part.text) continue;
@@ -132,6 +134,7 @@ async function* openai(conn, { system, messages, signal, json }) {
   const body = {
     model: conn.model.trim(),
     stream: true,
+    stream_options: { include_usage: true },
     ...(json ? { response_format: { type: 'json_object' } } : {}),
     messages: [
       ...(system ? [{ role: 'system', content: system }] : []),
@@ -151,6 +154,8 @@ async function* openai(conn, { system, messages, signal, json }) {
   const resp = await post(`${base}/chat/completions`, { Authorization: `Bearer ${conn.apiKey.trim()}` }, body, signal);
   for await (const chunk of sse(resp)) {
     if (chunk.error) throw new Error(`エラー\n${chunk.error.message || JSON.stringify(chunk.error)}`);
+    const u = chunk.usage;
+    if (u) yield { usage: { in: u.prompt_tokens || 0, out: u.completion_tokens || 0, think: u.completion_tokens_details?.reasoning_tokens || 0, cached: u.prompt_tokens_details?.cached_tokens || 0 } };
     const choice = chunk.choices?.[0];
     const d = choice?.delta || {};
     const thought = d.reasoning || d.reasoning_content;

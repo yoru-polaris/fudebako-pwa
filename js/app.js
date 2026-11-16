@@ -33,6 +33,7 @@ const ICONS = {
   ai: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
   image: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8.5 11a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 16l-5-5-9 9',
   clip: 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
+  gauge: 'M12 21a9 9 0 1 1 9-9M12 12l5-3M3 12h2M12 3v2',
   spark: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
 };
 
@@ -282,6 +283,33 @@ function scrollBottom() {
   box.scrollTop = box.scrollHeight;
 }
 
+const num = (n) => Number(n || 0).toLocaleString();
+const usageText = (u) => `入力 ${num(u.in)}${u.cached ? `（うちキャッシュ ${num(u.cached)}・${Math.round((u.cached / Math.max(1, u.in)) * 100)}％）` : ''} ／ 出力 ${num(u.out)}${u.think ? ` ／ 思考 ${num(u.think)}` : ''} トークン`;
+
+function openUsage() {
+  $('#sheetTitle').textContent = '使用量';
+  const sum = (list) => list.reduce((t, m) => (m.usage ? { n: t.n + 1, in: t.in + m.usage.in, out: t.out + m.usage.out, think: t.think + m.usage.think, cached: t.cached + m.usage.cached } : t), { n: 0, in: 0, out: 0, think: 0, cached: 0 });
+  const table = (title, t) => h('div', { class: 'card' },
+    h('strong', { text: title }),
+    t.n ? h('div', { class: 'usagegrid' },
+      h('span', { text: '返事の回数' }), h('b', { text: `${num(t.n)} 回` }),
+      h('span', { text: '入力' }), h('b', { text: `${num(t.in)} トークン` }),
+      h('span', { text: 'うちキャッシュ' }), h('b', { text: `${num(t.cached)} トークン（${Math.round((t.cached / Math.max(1, t.in)) * 100)}％）` }),
+      h('span', { text: '出力' }), h('b', { text: `${num(t.out)} トークン` }),
+      h('span', { text: '思考' }), h('b', { text: `${num(t.think)} トークン` }))
+      : h('p', { class: 'hint', text: 'まだ記録がありません（この機能を入れたあとの返事から数えます）。' }));
+  const path = pathTo(S.chat.leafId);
+  const last = [...path].reverse().find((m) => m.usage);
+  $('#sheetBody').replaceChildren(
+    h('p', { class: 'hint', text: 'AIから返ってきた実際の数字です。入力は「毎回送っている量」で、会話が長いほど増えます。キャッシュは、前回と同じ出だしの部分が割引で処理された量です。' }),
+    last && h('div', { class: 'card' }, h('strong', { text: '直近の返事' }), h('p', { class: 'hint', text: usageText(last.usage) })),
+    table('今見ている枝の合計', sum(path)),
+    table('このチャット全体（消していない枝すべて）', sum([...S.msgs.values()])),
+    h('p', { class: 'hint', text: '料金の金額は表示していません（モデルごとの単価が変わるため）。要約・スマホをのぞく・AI整理で使った分は、ここには含まれません。' }),
+  );
+  show('#sheet');
+}
+
 function messageEl(m, index) {
   const el = h('div', { class: `msg ${m.role}` });
   el.dataset.id = m.id;
@@ -315,6 +343,7 @@ function messageEl(m, index) {
       ? h('img', { src: `data:${f.mime};base64,${f.data}`, alt: f.name })
       : h('span', { class: 'filechip' }, icon('clip'), f.name))));
     if (m.notice) bubble.append(h('div', { class: 'hint', text: `※ ${m.notice}` }));
+    if (m.usage && ui.showMeta) bubble.append(h('div', { class: 'meta usage', text: usageText(m.usage) }));
     if (m.loaded?.length) bubble.append(h('div', { class: 'hint' }, icon('book'), `詳細を読み込み: ${m.loaded.join('、')}`));
   }
   el.append(bubble);
@@ -607,6 +636,7 @@ function openChatMenu() {
     }),
     item('book', `今回の話${S.chat.note?.trim() ? '（設定あり）' : ''}`, openNote),
     item('phone', 'スマホをのぞく', phone.openPeekSheet),
+    item('gauge', '使用量（トークン・キャッシュ）', openUsage),
     item('branch', '分岐ツリー', openTree),
     item('summary', `あらすじ（要約）${S.chat.summary ? (S.chat.summaryOn === false ? '（オフ）' : '（あり）') : ''}`, openSummary),
     item('fold', 'すべてたたむ', () => foldAll(true)),
@@ -716,6 +746,7 @@ async function generate(parentId, opts = {}) {
       if (ev.text) { m.text += ev.text; got = true; }
       if (ev.thought) m.thought += ev.thought;
       if (ev.notice) m.notice = ev.notice;
+      if (ev.usage) m.usage = ev.usage;
       paint();
     }
   } catch (e) {
