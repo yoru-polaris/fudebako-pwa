@@ -303,3 +303,13 @@ svg { width: 22px; height: 22px; display: block; }
 .ph-meter i { display: block; height: 100%; background: var(--pa); border-radius: 3px; }
 .ph-strike { text-decoration: line-through; text-decoration-color: #6f707a; }
 button.primary .ic { vertical-align: -3px; }
+
+/* ---- キーボードが出たときも、見えている範囲にぴったり合わせる ---- */
+html, body { overflow: hidden; overscroll-behavior: none; }
+#app { position: fixed; left: 0; right: 0; top: var(--vt, 0px); height: var(--vh, 100dvh); }
+#drawer, #settings, #phone { top: var(--vt, 0px); bottom: auto; height: var(--vh, 100dvh); }
+#sheet { bottom: var(--vb, 0px); max-height: calc(var(--vh, 100dvh) * 0.78); }
+#backdrop { top: var(--vt, 0px); bottom: auto; height: var(--vh, 100dvh); }
+#toast { bottom: calc(var(--vb, 0px) + 110px); }
+#connTag { font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 6px; flex: none; background: color-mix(in srgb, currentColor 24%, transparent); }
+#promptChip { flex: 1 1 0; } #modelChip { flex: 1.7 1 0; }

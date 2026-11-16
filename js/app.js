@@ -348,6 +348,10 @@ function render() {
   $('#chatTitle').textContent = S.chat.title || '新しいチャット';
   $('#promptChip span').textContent = promptOf(S.chat.promptId)?.name || 'プロンプトなし';
   $('#modelChip span').textContent = modelLabel(activeConn());
+  // 接続先が複数あるときは、同じ名前のモデルを見分けられるよう接続先の名前も出す
+  const several = S.settings.connections.length > 1 && activeConn();
+  $('#connTag').hidden = !several;
+  $('#connTag').textContent = several ? (activeConn().name || '').slice(0, 5) : '';
   $('#charChip span').textContent = chatChars(S.chat).length;
   $('#btnImages').classList.toggle('off', !S.settings.showImages);
   $('#btnSend').textContent = S.busy ? '停止' : '送信';
@@ -675,7 +679,7 @@ async function generate(parentId, opts = {}) {
   let got = false;
   const m = { id: uid(), chatId: S.chat.id, parentId, role: 'assistant', text: prefill && conn.tailJoin ? prefill : '', thought: '', createdAt: Date.now() };
   if (loaded.length) m.loaded = loaded;
-  m.model = modelLabel(conn);
+  m.model = modelLabel(conn) + (S.settings.connections.length > 1 && conn?.type !== 'dummy' ? `（${conn.name}）` : '');
   const chat = S.chat;
   S.msgs.set(m.id, m);
   chat.leafId = m.id;
@@ -1469,6 +1473,25 @@ document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('cli
 document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => { S.tab = b.dataset.tab; S.openCard = null; renderSettings(); }));
 
 document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
+// iPhoneではキーボードが出ても画面の高さが変わらず、入力欄が宙に浮いたり隠れたりする。
+// 実際に見えている範囲（visualViewport）に合わせて、画面全体の位置と高さを合わせ直す。
+const vv = window.visualViewport;
+if (vv) {
+  const fit = () => {
+    const box = $('#messages');
+    const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    const root = document.documentElement.style;
+    root.setProperty('--vh', `${vv.height}px`);
+    root.setProperty('--vt', `${vv.offsetTop}px`);
+    root.setProperty('--vb', `${Math.max(0, window.innerHeight - vv.height - vv.offsetTop)}px`);
+    if (stick) scrollBottom();
+    updateBar();
+  };
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+  fit();
+}
+
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 const phone = initPhone({ $, h, icon, ICONS, S, db, streamChat, uid, pathTo, chatChars, buildSystem, summaryCut, apiMessage, activeConn, modelLabel, show, closePanels, toast, stamp });
