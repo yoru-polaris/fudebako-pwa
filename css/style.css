@@ -331,3 +331,4 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .bubble.side { border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
 .sidetag { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
 .sidetag .ic { width: 13px; height: 13px; margin-right: 4px; }
+#input { max-height: calc(var(--vh, 100dvh) * 0.38); }

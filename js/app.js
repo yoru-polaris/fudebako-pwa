@@ -55,7 +55,7 @@ const S = {
   settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null, lastCharIds: [],
     summary: { connId: '', model: '', auto: false, threshold: 40, keep: 10 },
     ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false,
-      replaceUser: true, toolsMode: 'always', toolColors: true, showMeta: true, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
+      kbGap: 'auto', replaceUser: true, toolsMode: 'always', toolColors: true, showMeta: true, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
   prompts: [],
   chars: [],
   chats: [],
@@ -86,6 +86,7 @@ function applyUi() {
   const root = document.documentElement;
   if (ui.theme === 'auto') delete root.dataset.theme; else root.dataset.theme = ui.theme;
   root.style.setProperty('--msg-size', `${ui.fontSize}px`);
+  fitViewport();
   root.style.setProperty('--veil', `${ui.bgVeil}%`);
   root.style.setProperty('--bubble-alpha', `${ui.bubbleAlpha}%`);
   const color = getComputedStyle($('#topbar')).backgroundColor;
@@ -1454,6 +1455,7 @@ function renderSettings() {
       h('div', { class: 'card' },
         h('strong', { text: '操作' }),
         check('replaceUser', '設定文の「User」を主人公の名前に置き換える', '主人公を選んでいるチャットで、キャラ設定や始まり方に書かれた「User」「{{user}}」を主人公の名前に変えてからAIに渡します。'),
+        field('キーボードが出ているときの、入力欄の下の余白', select(ui, 'kbGap', { auto: '自動', 0: 'なし', 40: '小', 72: '中', 100: '大', 130: '特大' }, save), '入力欄の下や送信ボタンがキーボードに隠れるときは大きく、入力欄とキーボードの間が空きすぎるときは小さくしてください。'),
         check('scrollbar', '右端にスクロールバーを表示する', '指でつまんで動かすと、長い会話をすばやく移動できます。'),
         field('「続き」ボタンでAIに送る指示', bound(ui, 'continueText', save, { type: 'text' }), '最後の返事の下の「続き」を押すと、この文章をこっそり送って続きを書かせます。画面には残りません。'),
         check('autoScroll', '返事が届いている間、自動で下へスクロールする'),
@@ -1590,21 +1592,33 @@ document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('cli
 document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
 // iPhoneではキーボードが出ても画面の高さが変わらず、入力欄が宙に浮いたり隠れたりする。
 // 実際に見えている範囲（visualViewport）に合わせて、画面全体の位置と高さを合わせ直す。
-const vv = window.visualViewport;
-if (vv) {
-  const fit = () => {
-    const box = $('#messages');
-    const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    const root = document.documentElement.style;
-    root.setProperty('--vh', `${vv.height}px`);
-    root.setProperty('--vt', `${vv.offsetTop}px`);
-    root.setProperty('--vb', `${Math.max(0, window.innerHeight - vv.height - vv.offsetTop)}px`);
-    if (stick) scrollBottom();
-    updateBar();
-  };
-  vv.addEventListener('resize', fit);
-  vv.addEventListener('scroll', fit);
-  fit();
+// 新しいiOSでは、キーボードの上に浮かぶ操作バー（∧ ∨ ✓）の分が「見えている範囲」に含まれて
+// しまい、入力欄の下が隠れる。キーボードが出ている間だけ、その分の余白を追加で空ける。
+const isAppleTouch = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const floatingBar = isAppleTouch && typeof CSS !== 'undefined' && CSS.supports?.('anchor-name: --a');
+let fullHeight = 0;
+let lastWidth = 0;
+function fitViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  if (vv.width !== lastWidth) { lastWidth = vv.width; fullHeight = 0; }   // 向きが変わったら測り直す
+  fullHeight = Math.max(fullHeight, vv.height);
+  const keyboard = fullHeight - vv.height > 120;
+  const pref = S.settings.ui.kbGap;
+  const gap = !keyboard ? 0 : pref === 'auto' || pref == null ? (floatingBar ? 72 : 0) : Number(pref) || 0;
+  const box = $('#messages');
+  const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const root = document.documentElement.style;
+  root.setProperty('--vh', `${vv.height - gap}px`);
+  root.setProperty('--vt', `${vv.offsetTop}px`);
+  root.setProperty('--vb', `${Math.max(0, window.innerHeight - vv.height - vv.offsetTop) + gap}px`);
+  if (stick) scrollBottom();
+  updateBar();
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', fitViewport);
+  window.visualViewport.addEventListener('scroll', fitViewport);
+  fitViewport();
 }
 
 navigator.storage?.persist?.();
