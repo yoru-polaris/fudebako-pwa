@@ -20,8 +20,9 @@ function h(tag, props = {}, ...kids) {
 // ---------- 状態 ----------
 const S = {
   settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null, lastCharIds: [],
+    summary: { connId: '', model: '', auto: false, threshold: 40, keep: 10 },
     ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false,
-      replaceUser: true, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
+      replaceUser: true, toolsMode: 'always', toolColors: true, showMeta: true, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
   prompts: [],
   chars: [],
   chats: [],
@@ -87,7 +88,15 @@ function fillNames(chat, text) {
 
 // プロンプトとキャラ表から、AIに渡すシステムプロンプトを組み立てる。
 // 「詳細」は、直近の会話に名前かキーワードが出たキャラの分だけ入れる。
-function buildSystem(chat, recentText) {
+// 要約が有効なら、path のうち何件目までが要約済みかを返す（無効・対象外なら 0）
+function summaryCut(chat, path) {
+  const sum = chat.summary;
+  if (!sum?.text?.trim() || chat.summaryOn === false) return 0;
+  const i = path.findIndex((m) => m.id === sum.uptoId);
+  return i >= 0 && i < path.length - 1 ? i + 1 : 0;
+}
+
+function buildSystem(chat, recentText, summaryText) {
   const parts = [promptOf(chat.promptId)?.text || ''];
   const loaded = [];
   const block = (c) => {
@@ -105,6 +114,7 @@ function buildSystem(chat, recentText) {
     if (list.length) parts.push(`${title}\n\n${list.map(block).join('\n\n')}`);
   }
   if (chat.note?.trim()) parts.push(`# 今回の話\n\n${chat.note.trim()}`);
+  if (summaryText) parts.push(`# これまでのあらすじ\n\n${summaryText.trim()}`);
   return { system: fillNames(chat, parts.filter(Boolean).join('\n\n')), loaded };
 }
 
@@ -219,7 +229,7 @@ function scrollBottom() {
   box.scrollTop = box.scrollHeight;
 }
 
-function messageEl(m) {
+function messageEl(m, index) {
   const el = h('div', { class: `msg ${m.role}` });
   el.dataset.id = m.id;
 
@@ -235,7 +245,14 @@ function messageEl(m) {
   }
 
   const fold = async () => { m.collapsed = !m.collapsed; render(); await db.put('messages', m); };
-  const bubble = h('div', { class: `bubble ${m.collapsed ? 'folded' : ''}`, onclick: m.collapsed && !S.busy ? fold : null });
+  const ui = S.settings.ui;
+  const tapTools = (e) => {
+    if (ui.toolsMode !== 'tap' || S.busy || e.target.closest('img,button,details,a') || String(getSelection())) return;
+    S.toolsFor = S.toolsFor === m.id ? null : m.id;
+    render();
+  };
+  const bubble = h('div', { class: `bubble ${m.collapsed ? 'folded' : ''}`, onclick: m.collapsed ? (S.busy ? null : fold) : tapTools });
+  if (ui.showMeta) bubble.append(h('div', { class: 'meta', text: [`#${index + 1}`, m.model, new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' / ') }));
   if (m.collapsed) {
     bubble.append(h('div', { class: 'body', text: expandImages(m.text).replace(IMG_URL, '🖼').trim().slice(0, 200) }));
   } else {
@@ -249,10 +266,10 @@ function messageEl(m) {
   }
   el.append(bubble);
 
-  if (!S.busy) {
+  if (!S.busy && (ui.toolsMode !== 'tap' || m.id === S.chat.leafId || S.toolsFor === m.id)) {
     const sibs = childrenOf(m.parentId);
     const idx = sibs.indexOf(m);
-    const tools = h('div', { class: 'tools' });
+    const tools = h('div', { class: `tools ${ui.toolColors ? 'colored' : ''}` });
     if (sibs.length > 1) {
       tools.append(
         h('button', { text: '◀', disabled: idx === 0, 'aria-label': '前の枝', onclick: () => switchBranch(sibs[idx - 1]) }),
@@ -260,13 +277,14 @@ function messageEl(m) {
         h('button', { text: '▶', disabled: idx === sibs.length - 1, 'aria-label': '次の枝', onclick: () => switchBranch(sibs[idx + 1]) }),
       );
     }
-    tools.append(h('button', { class: 'sym', text: m.collapsed ? '▸' : '▾', 'aria-label': m.collapsed ? 'ひらく' : 'たたむ', onclick: fold }));
-    if (m.role === 'assistant' && m.id === S.chat.leafId) tools.append(h('button', { text: '続き', onclick: () => continueFrom(m) }));
-    if (m.role === 'assistant') tools.append(h('button', { text: '再生成', onclick: () => generate(m.parentId) }));
+    tools.append(h('button', { class: 'sym c-fold', text: m.collapsed ? '▸' : '▾', 'aria-label': m.collapsed ? 'ひらく' : 'たたむ', onclick: fold }));
+    if (m.role === 'assistant' && m.id === S.chat.leafId) tools.append(h('button', { class: 'c-go', text: '続き', onclick: () => continueFrom(m) }));
+    if (m.role === 'assistant') tools.append(h('button', { class: 'c-retry', text: '再生成', onclick: () => generate(m.parentId) }));
     tools.append(
-      h('button', { text: '編集', onclick: () => { S.editing = m.id; render(); } }),
-      h('button', { text: 'コピー', onclick: () => navigator.clipboard.writeText(m.text).then(() => toast('コピーしました')) }),
-      h('button', { text: '削除', onclick: () => removeMessage(m) }),
+      h('button', { class: 'c-edit', text: '編集', onclick: () => { S.editing = m.id; render(); } }),
+      h('button', { class: 'c-copy', text: 'コピー', onclick: () => navigator.clipboard.writeText(m.text).then(() => toast('コピーしました')) }),
+      h('button', { class: 'c-del', text: '削除', onclick: () => removeMessage(m) }),
+      h('span', { class: 'cnt', text: `${m.text.length.toLocaleString()} / ${S.totalChars.toLocaleString()}字` }),
     );
     el.append(tools);
   }
@@ -283,7 +301,9 @@ function render() {
 
   const box = $('#messages');
   const path = pathTo(S.chat.leafId);
-  box.replaceChildren(...path.map(messageEl));
+  S.totalChars = path.reduce((n, m) => n + m.text.length, 0);
+  const cut = summaryCut(S.chat, path);
+  box.replaceChildren(...path.flatMap((m, i) => [messageEl(m, i), i === cut - 1 && h('div', { class: 'cutline', text: 'ここまで要約済み（これより上はあらすじとして送られます）' })]).filter(Boolean));
   if (!path.length && !S.error) {
     const conn = activeConn();
     const ready = conn?.apiKey || conn?.type === 'dummy';
@@ -411,6 +431,88 @@ function openTree() {
   show('#sheet');
 }
 
+const SUMMARY_PROMPT = `あなたは物語の記録係です。渡される小説・ロールプレイの本文を、続きを書くための「あらすじ」にまとめてください。
+
+- 出来事を起きた順に書く。
+- 登場人物それぞれの今の状態、気持ち、関係の変化を書く。
+- 今いる場所と時間、まだ解決していないこと、約束や伏線を書く。
+- 途中で決まった設定や呼び名があれば書く。
+- 「これまでのあらすじ」が渡されたら、その内容を残したまま、続きの本文の分を足して1つにまとめ直す。
+- 内容を和らげたり、評価や感想を加えたりしない。
+- 2000字以内。あらすじの本文だけを出力する。`;
+
+function summaryConn() {
+  const cfg = S.settings.summary;
+  const base = S.settings.connections.find((c) => c.id === cfg.connId) || activeConn();
+  return base && { ...base, model: (cfg.connId && cfg.model) || base.model, tailUser: '', tailModel: '' };
+}
+
+async function summarize(manual) {
+  if (S.summarizing) return;
+  const chat = S.chat;
+  const path = pathTo(chat.leafId);
+  const keep = Math.max(2, Number(S.settings.summary.keep) || 10);
+  const done = chat.summary ? path.findIndex((m) => m.id === chat.summary.uptoId) + 1 : 0;
+  const end = path.length - keep;
+  if (end - done < 2) {
+    if (manual) alert(`まだ要約するほど長くありません。\n直近 ${keep} 件はそのまま残し、それより前を要約します。`);
+    return;
+  }
+  const body = path.slice(done, end).map((m) => `${m.role === 'user' ? '【ユーザー】' : '【AI】'}\n${apiMessage(m).text}`).join('\n\n');
+  const input = `${done ? `# これまでのあらすじ\n${chat.summary.text}\n\n` : ''}# 続きの本文\n${body}`;
+  S.summarizing = true;
+  if (!manual) toast('古い部分を要約しています…');
+  try {
+    let out = '';
+    for await (const ev of streamChat(summaryConn(), { system: SUMMARY_PROMPT, messages: [{ role: 'user', text: input }] })) {
+      if (ev.text) out += ev.text;
+      if (ev.notice && !out) throw new Error(ev.notice);
+    }
+    if (!out.trim()) throw new Error('要約の返事が空でした。');
+    chat.summary = { text: out.trim(), uptoId: path[end - 1].id, createdAt: Date.now() };
+    chat.summaryOn = true;
+    await db.put('chats', chat);
+    toast(`${end} 件目までを要約しました`);
+    if (S.chat === chat && !S.busy) { if ($('#sheet').hidden) render(); else openSummary(); }
+  } catch (e) {
+    if (manual) alert(`要約できませんでした。\n${e.message}`); else toast('要約に失敗しました（チャットはそのまま続けられます）');
+  }
+  S.summarizing = false;
+}
+
+function openSummary() {
+  $('#sheetTitle').textContent = 'あらすじ（要約）';
+  const chat = S.chat;
+  const cfg = S.settings.summary;
+  const path = pathTo(chat.leafId);
+  const done = chat.summary ? path.findIndex((m) => m.id === chat.summary.uptoId) + 1 : 0;
+  const saveChatOnly = () => (S.chats.includes(chat) ? db.put('chats', chat) : null);
+  const ta = h('textarea', { class: 'big', value: chat.summary?.text || '', placeholder: 'まだ要約はありません。' });
+  ta.addEventListener('change', () => { if (chat.summary) { chat.summary.text = ta.value; saveChatOnly(); } });
+  const models = { '': '本文と同じモデルを使う' };
+  for (const c of S.settings.connections) for (const name of c.type === 'dummy' ? ['ダミーAI'] : c.models) models[`${c.id}|${name}`] = `${c.name} / ${name}`;
+  const pick = h('select', {}, Object.entries(models).map(([value, text]) => h('option', { value, text })));
+  pick.value = cfg.connId ? `${cfg.connId}|${cfg.model}` : '';
+  if (pick.selectedIndex < 0) pick.value = '';
+  pick.addEventListener('change', () => { [cfg.connId, cfg.model] = pick.value ? pick.value.split('|') : ['', '']; saveSettings(); });
+  const runBtn = h('button', { class: 'primary', text: '今すぐ要約する', onclick: async () => { runBtn.disabled = true; runBtn.textContent = '要約中…'; await summarize(true); if (!$('#sheet').hidden) openSummary(); } });
+  $('#sheetBody').replaceChildren(
+    h('p', { class: 'hint', text: '会話が長くなったら、古い部分をあらすじに置き換えてAIに送ります。料金が減り、序盤の内容も忘れにくくなります。画面の会話は消えません。' }),
+    h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: chat.summaryOn !== false, onchange: (e) => { chat.summaryOn = e.target.checked; saveChatOnly(); } }), 'このチャットで要約を使う'),
+    h('div', { class: 'hint', text: done ? `${path.length} 件のうち ${done} 件目までを要約済みです。下の文章は書き直せます。` : chat.summary ? '今見ている枝には、この要約は当てはまりません（別の枝で作った要約です）。' : '' }),
+    ta,
+    h('div', { class: 'btnrow' }, runBtn,
+      chat.summary && h('button', { class: 'danger', text: '要約を消す', onclick: async () => { if (!confirm('要約を消して、全文を送る状態に戻しますか？')) return; delete chat.summary; await saveChatOnly(); openSummary(); } })),
+    h('div', { class: 'card', style: 'margin-top:14px' },
+      h('strong', { text: '要約の設定（全チャット共通）' }),
+      field('要約に使うモデル', pick, '安いモデルで十分です。'),
+      h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!cfg.auto, onchange: (e) => { cfg.auto = e.target.checked; saveSettings(); } }), '長くなったら自動で要約する'),
+      field('要約していないメッセージがこの件数を超えたら要約', bound(cfg, 'threshold', saveSettings, { type: 'number', min: '6', inputMode: 'numeric' })),
+      field('直近この件数は要約せずそのまま送る', bound(cfg, 'keep', saveSettings, { type: 'number', min: '2', inputMode: 'numeric' }))),
+  );
+  show('#sheet');
+}
+
 function saveText(list) {
   const name = `${(S.chat.title || 'チャット').replace(/[\\/:*?"<>|\n]/g, '_')}.txt`;
   closePanels();
@@ -437,6 +539,7 @@ function openChatMenu() {
     }),
     item(`📖 今回の話${S.chat.note?.trim() ? '（設定あり）' : ''}`, openNote),
     item('🌳 分岐ツリー', openTree),
+    item(`♻️ あらすじ（要約）${S.chat.summary ? (S.chat.summaryOn === false ? '（オフ）' : '（あり）') : ''}`, openSummary),
     item('▸ すべてたたむ', () => foldAll(true)),
     item('▾ すべてひらく', () => foldAll(false)),
     item('📋 全文をコピー（今見えている枝）', () => copy(path)),
@@ -495,8 +598,11 @@ const continueFrom = (m) => generate(m.id, { extraUser: S.settings.ui.continueTe
 async function generate(parentId, opts = {}) {
   if (S.busy) return;
   const conn = activeConn();
-  const history = pathTo(parentId).map(apiMessage);
-  const { system, loaded } = buildSystem(S.chat, history.slice(-4).map((x) => x.text).join('\n'));
+  const fullPath = pathTo(parentId);
+  let cut = summaryCut(S.chat, [...fullPath, {}]);
+  if (cut >= fullPath.length) cut = 0;
+  const history = fullPath.slice(cut).map(apiMessage);
+  const { system, loaded } = buildSystem(S.chat, history.slice(-4).map((x) => x.text).join('\n'), cut ? S.chat.summary.text : '');
   if (opts.extraUser) history.push({ role: 'user', text: opts.extraUser });
   if (conn?.tailUser?.trim()) history.push({ role: 'user', text: conn.tailUser });
   const prefill = conn?.tailModel?.trim() ? conn.tailModel : '';
@@ -504,6 +610,7 @@ async function generate(parentId, opts = {}) {
   let got = false;
   const m = { id: uid(), chatId: S.chat.id, parentId, role: 'assistant', text: prefill && conn.tailJoin ? prefill : '', thought: '', createdAt: Date.now() };
   if (loaded.length) m.loaded = loaded;
+  m.model = modelLabel(conn);
   const chat = S.chat;
   S.msgs.set(m.id, m);
   chat.leafId = m.id;
@@ -556,6 +663,10 @@ async function generate(parentId, opts = {}) {
     if (!S.error && !S.abort.signal.aborted) S.error = m.notice || '返事が空でした。もう一度試してください。';
   }
   if (S.chat === chat) { await saveChat(); render(); } else { await db.put('chats', chat); }
+  if (got && S.chat === chat && S.settings.summary.auto) {
+    const p = pathTo(chat.leafId);
+    if (p.length - summaryCut(chat, p) > Number(S.settings.summary.threshold || 40)) summarize(false);
+  }
 }
 
 async function send() {
@@ -1129,6 +1240,11 @@ function renderSettings() {
         check('showTimer', '返事を待っている間、秒数を表示する'),
         check('enterSend', 'Enterキーで送信する', 'オンにすると、iPhoneのキーボードでは「改行」キーで送信されます（改行できなくなります）。外付けキーボードやPC向けです。Shift+Enterで改行できます。'),
         check('skipDeleteConfirm', 'メッセージ削除のときに確認しない')),
+      h('div', { class: 'card' },
+        h('strong', { text: 'メッセージのボタン' }),
+        field('ボタンの出し方', select(ui, 'toolsMode', { always: 'いつも表示する', tap: '吹き出しをタップしたときだけ表示する' }, save), '「タップしたときだけ」でも、最後のメッセージにはいつも表示されます。'),
+        check('toolColors', 'ボタンを色分けする'),
+        check('showMeta', '番号・モデル名・時刻を吹き出しに表示する')),
     );
   } else {
     const picker = h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: () => picker.files[0] && importData(picker.files[0]) });
@@ -1183,6 +1299,7 @@ async function loadAll() {
   const uiDefaults = S.settings.ui;
   Object.assign(S.settings, settings);
   S.settings.ui = { ...uiDefaults, ...settings?.ui };
+  S.settings.summary = { connId: '', model: '', auto: false, threshold: 40, keep: 10, ...settings?.summary };
   applyUi();
   const hasBg = await applyBg();
   S.hasBg = hasBg;
