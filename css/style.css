@@ -183,3 +183,37 @@ details.sub { margin-top: 12px; } details.sub > summary { color: var(--sub); fon
 .jump { opacity: .85; }
 #messages { padding-bottom: 64px; }
 .older { margin-bottom: 16px; font-size: 14px; color: var(--sub); }
+
+/* ---- 見た目の調整（ヘッダー2段・線画アイコン・吹き出し） ---- */
+svg { width: 22px; height: 22px; display: block; }
+#topbar { display: block; padding: env(safe-area-inset-top) 6px 8px; border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel)); }
+.toprow { display: flex; align-items: center; gap: 2px; }
+.iconbtn { display: inline-flex; align-items: center; justify-content: center; color: var(--text); }
+#chatTitle { flex: 1; min-width: 0; font-size: 17px; font-weight: 700; padding: 8px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#chips { display: flex; gap: 6px; padding: 0 6px; min-width: 0; }
+.chip { display: inline-flex; align-items: center; gap: 5px; min-width: 0; font-size: 13px; padding: 4px 11px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--text); align-self: auto; }
+.chip svg { width: 14px; height: 14px; flex: none; color: var(--accent); }
+.chip span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#promptChip, #modelChip { flex: 1 1 0; max-width: none; min-width: 0; }
+#charChip { flex: none; }
+.bubble { box-shadow: 0 1px 2px rgba(0,0,0,.07); }
+.msg.user .bubble { border-radius: 16px 16px 4px 16px; }
+.msg.assistant .bubble { border-radius: 16px 16px 16px 4px; }
+#messages.hasbg .bubble { -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.jump { width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .25s; }
+.jump.show { opacity: .92; pointer-events: auto; }
+#btnTop { right: 64px; top: -48px; } #btnBottom { right: 18px; top: -48px; }
+#btnSend { border-radius: 12px; }
+#composer { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+#pending { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.msg .tools { gap: 5px; margin-top: 6px; }
+.msg .tools.colored button { font-size: 13px; padding: 2px 10px; min-height: 28px; margin: 0; border-radius: 7px; }
+.msg .tools.colored button.sym { font-size: 12px; padding: 2px 9px; }
+.msg .tools.colored button { background: #8a8a8a; }
+.msg .tools.colored .c-edit { background: #cf8a2e; }
+.msg .tools.colored .c-del { background: #c05048; }
+.msg .tools.colored .c-copy { background: #b9557f; }
+.msg .tools.colored .c-retry { background: #56935a; }
+.msg .tools.colored .c-go { background: #4b82bd; }

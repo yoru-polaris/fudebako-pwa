@@ -314,9 +314,9 @@ function messageEl(m, index) {
 
 function render() {
   $('#chatTitle').textContent = S.chat.title || '新しいチャット';
-  $('#promptChip').textContent = `📝 ${promptOf(S.chat.promptId)?.name || 'なし'}`;
-  $('#modelChip').textContent = modelLabel(activeConn());
-  $('#charChip').textContent = `👤 ${chatChars(S.chat).length}`;
+  $('#promptChip span').textContent = promptOf(S.chat.promptId)?.name || 'プロンプトなし';
+  $('#modelChip span').textContent = modelLabel(activeConn());
+  $('#charChip span').textContent = chatChars(S.chat).length;
   $('#btnImages').classList.toggle('off', !S.settings.showImages);
   $('#btnSend').textContent = S.busy ? '停止' : '送信';
 
@@ -1222,7 +1222,7 @@ function renderSettings() {
     );
   } else if (S.tab === 'prompts') {
     body.replaceChildren(
-      h('p', { class: 'hint', text: '執筆用・ロールプレイ用などを保存しておき、チャット画面上部の「📝」をタップして切り替えます。' }),
+      h('p', { class: 'hint', text: '執筆用・ロールプレイ用などを保存しておき、チャット画面上部のプロンプト名をタップして切り替えます。' }),
       ...S.prompts.map(promptCard),
       h('button', { class: 'wide', text: '＋ プロンプトを追加', onclick: async () => {
         const p = { id: uid(), name: '新しいプロンプト', text: '', createdAt: Date.now() };
@@ -1246,7 +1246,7 @@ function renderSettings() {
       } }),
     ];
     body.replaceChildren(
-      h('p', { class: 'hint', text: 'ここで作ったカードを、チャット画面上部の「👤」から、そのチャットで使うものだけ選びます。' }),
+      h('p', { class: 'hint', text: 'ここで作ったカードを、チャット画面上部の人のマークから、そのチャットで使うものだけ選びます。' }),
       ...section('hero', '主人公', '自分が演じる・語る人物。話によって変えたいときは複数作って、チャットごとに1人選びます。', '主人公'),
       ...section('char', '登場人物', '相手役や脇役。人数が多くても、詳細は名前が出た人の分だけ読み込まれます。', '登場人物'),
       ...section('world', '世界設定', '舞台や用語。キーワードが出たときだけ詳細を読み込みます（他のアプリの「ロアブック」と同じ働きです）。', '世界設定'),
@@ -1396,6 +1396,7 @@ $('#input').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
   if (e.metaKey || e.ctrlKey || (S.settings.ui.enterSend && !e.shiftKey)) { e.preventDefault(); send(); }
 });
+let jumpTimer = 0;
 $('#btnBottom').addEventListener('click', scrollBottom);
 $('#btnTop').addEventListener('click', () => { $('#messages').scrollTop = 0; });
 $('#messages').addEventListener('scroll', updateBar, { passive: true });
@@ -1407,6 +1408,10 @@ $('#messages').addEventListener('scroll', () => {
   const box = $('#messages');
   $('#btnBottom').hidden = box.scrollHeight - box.scrollTop - box.clientHeight < 300;
   $('#btnTop').hidden = box.scrollTop < 300;
+  // ジャンプボタンはスクロール中だけ出し、止まったら消す（メッセージのボタンに重ならないように）
+  document.querySelectorAll('.jump').forEach((b) => b.classList.add('show'));
+  clearTimeout(jumpTimer);
+  jumpTimer = setTimeout(() => document.querySelectorAll('.jump').forEach((b) => b.classList.remove('show')), 2500);
 }, { passive: true });
 $('#btnAttach').addEventListener('click', () => {
   const el = h('input', { type: 'file', accept: 'image/*,.txt,.md,text/plain,text/markdown', multiple: true, onchange: () => addFiles(el.files) });
