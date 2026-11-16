@@ -176,11 +176,15 @@ async function saveChat() {
   await Promise.all([db.put('chats', S.chat), saveSettings()]);
 }
 
+// 長い会話でも重くならないよう、画面に出すのは直近 PAGE 件だけにする（上のボタンで追加表示）
+const PAGE = 60;
+
 async function openChat(chat) {
   S.abort?.abort();
   S.chat = chat;
   S.error = '';
   S.editing = null;
+  S.showCount = PAGE;
   S.msgs = new MsgMap((await db.messagesOf(chat.id)).map((m) => [m.id, m]));
   kidsIndex = null;
   if (S.chats.includes(chat)) { S.settings.lastChatId = chat.id; saveSettings(); }
@@ -320,7 +324,16 @@ function render() {
   const path = pathTo(S.chat.leafId);
   S.totalChars = path.reduce((n, m) => n + m.text.length, 0);
   const cut = summaryCut(S.chat, path);
-  box.replaceChildren(...path.flatMap((m, i) => [messageEl(m, i), i === cut - 1 && h('div', { class: 'cutline', text: 'ここまで要約済み（これより上はあらすじとして送られます）' })]).filter(Boolean));
+  const hidden = Math.max(0, path.length - (S.showCount || PAGE));
+  box.replaceChildren(...[
+    hidden > 0 && h('button', { class: 'wide older', text: `▲ 前のメッセージを表示（あと ${hidden} 件）`, onclick: () => {
+      const before = box.scrollHeight;
+      S.showCount = (S.showCount || PAGE) + PAGE;
+      render();
+      box.scrollTop += box.scrollHeight - before;
+    } }),
+    ...path.flatMap((m, i) => (i < hidden ? [] : [messageEl(m, i), i === cut - 1 && h('div', { class: 'cutline', text: 'ここまで要約済み（これより上はあらすじとして送られます）' })])),
+  ].filter(Boolean));
   if (!path.length && !S.error) {
     const conn = activeConn();
     const ready = conn?.apiKey || conn?.type === 'dummy';
@@ -431,6 +444,8 @@ function openTree() {
 
   const jump = (row) => {
     if (!onPath.has(row.last.id)) S.chat.leafId = deepest(row.last.id);
+    const p = pathTo(S.chat.leafId);
+    S.showCount = Math.max(S.showCount || PAGE, p.length - p.findIndex((m) => m.id === row.start.id) + 2);
     S.error = '';
     closePanels();
     saveChat();
@@ -1133,12 +1148,34 @@ const toDataUrl = (blob) => new Promise((r) => { const fr = new FileReader(); fr
 const packChars = (list) => Promise.all(list.map(async (c) => (c.bg instanceof Blob ? { ...c, bg: await toDataUrl(c.bg) } : c)));
 const unpackChars = (list) => Promise.all(list.map(async (c) => (typeof c.bg === 'string' ? { ...c, bg: await (await fetch(c.bg)).blob() } : c)));
 
+async function refreshApp() {
+  try {
+    for (const r of await navigator.serviceWorker?.getRegistrations?.() || []) await r.unregister();
+    for (const k of await caches.keys()) await caches.delete(k);
+  } catch { /* 消せなくても読み込み直しは試す */ }
+  location.reload();
+}
+
+// 起動に失敗したときの画面。データには触れず、書き出しと更新だけできるようにする。
+function showFatal(e) {
+  $('#messages').replaceChildren(h('div', { class: 'errbox' },
+    `アプリの起動に失敗しました。保存してあるデータは消えていません。\n\n（${e?.message || e}）`,
+    h('div', { class: 'btnrow' },
+      h('button', { text: 'データをファイルに書き出す', onclick: () => exportData().catch((x) => alert(`書き出せませんでした。\n${x.message}`)) }),
+      h('button', { text: '最新版に更新して開き直す', onclick: refreshApp }))));
+}
+
 async function exportData() {
   const [chats, messages, prompts, chars] = await Promise.all([db.all('chats'), db.all('messages'), db.all('prompts'), db.all('chars')]);
-  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats, messages, prompts, chars: await packChars(chars) };
-  const name = `sousaku-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  const file = new File([JSON.stringify(data)], name, { type: 'application/json' });
-  await saveFile(file);
+  // 巨大な1本の文字列を作るとメモリ不足で失敗しやすいので、1件ずつ小分けにしてファイルにする
+  const parts = [`{"app":"sousaku-pwa","version":1,"exportedAt":"${new Date().toISOString()}"`];
+  for (const [key, list] of Object.entries({ chats, messages, prompts, chars: await packChars(chars) })) {
+    parts.push(`,"${key}":[`);
+    list.forEach((item, i) => parts.push((i ? ',' : '') + JSON.stringify(item)));
+    parts.push(']');
+  }
+  parts.push('}');
+  await saveFile(new File(parts, `sousaku-backup-${new Date().toISOString().slice(0, 10)}.json`, { type: 'application/json' }));
 }
 
 async function saveFile(file) {
@@ -1280,6 +1317,11 @@ function renderSettings() {
         check('showMeta', '番号・モデル名・時刻を吹き出しに表示する')),
     );
   } else {
+    const usage = h('p', { class: 'hint', text: '' });
+    navigator.storage?.estimate?.().then(async (e) => {
+      const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
+      usage.textContent = `保存しているデータ: 約 ${mb(e.usage || 0)}（チャット ${S.chats.length} 件）。この端末で使える目安: ${mb(e.quota || 0)}`;
+    }).catch(() => {});
     const picker = h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: () => picker.files[0] && importData(picker.files[0]) });
     body.replaceChildren(
       h('div', { class: 'card' },
@@ -1293,11 +1335,8 @@ function renderSettings() {
       h('div', { class: 'card' },
         h('strong', { text: 'アプリを更新' }),
         h('p', { class: 'hint', text: '新しい機能が反映されないときに押してください。チャットや設定は消えません。' }),
-        h('button', { text: '最新版に更新する', onclick: async () => {
-          for (const r of await navigator.serviceWorker?.getRegistrations?.() || []) await r.unregister();
-          for (const k of await caches.keys()) await caches.delete(k);
-          location.reload();
-        } })),
+        h('button', { text: '最新版に更新する', onclick: refreshApp })),
+      usage,
       h('div', { class: 'card' },
         h('strong', { text: 'すべて消す' }),
         h('p', { class: 'hint', text: 'チャット・プロンプト・接続先（APIキー）をすべて削除します。元に戻せません。' }),
@@ -1394,4 +1433,4 @@ document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('cli
 document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
-loadAll();
+loadAll().catch(showFatal);

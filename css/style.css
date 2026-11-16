@@ -182,3 +182,4 @@ details.sub { margin-top: 12px; } details.sub > summary { color: var(--sub); fon
 #btnTop { top: -52px; right: 72px; }
 .jump { opacity: .85; }
 #messages { padding-bottom: 64px; }
+.older { margin-bottom: 16px; font-size: 14px; color: var(--sub); }
