@@ -8,7 +8,7 @@ const SHAPE = `{
   "time": "21:48",
   "date": "10月21日 土曜日",
   "wallpaper": "壁紙の説明（その人らしさが出る一枚）",
-  "apps": { "messages": "メッセージ", "memos": "メモ", "searches": "ブラウザ", "wallet": "ウォレット", "calendar": "カレンダー", "photos": "写真", "screentime": "スクリーンタイム", "deleted": "最近削除" },
+  "apps": { "messages": "メッセージ", "memos": "メモ", "searches": "ブラウザ", "wallet": "ウォレット", "calendar": "カレンダー", "photos": "写真", "sns": "SNS", "deleted": "最近削除" },
   "notifications": [{ "app": "アプリ名", "text": "通知の文面", "time": "18:58" }],
   "messages": [{ "name": "相手の名前", "relation": "関係", "unread": 0, "thread": [{ "from": "them または me", "text": "本文", "time": "16:50" }] }],
   "memos": [{ "title": "題名", "date": "10月21日 18:12", "body": "本文。箇条書きは改行と「・」で書く" }],
@@ -16,7 +16,10 @@ const SHAPE = `{
   "wallet": [{ "shop": "店名", "category": "分類", "date": "10月21日", "note": "買ったもの", "amount": "-¥680" }],
   "calendar": [{ "date": "10月24日", "time": "16:30–18:00", "title": "予定", "place": "場所" }],
   "photos": [{ "date": "10月20日", "caption": "何が写っているか" }],
-  "screentime": [{ "app": "アプリ名", "minutes": 192 }],
+  "sns": {
+    "main": { "name": "表のアカウントの表示名", "handle": "@id", "bio": "自己紹介", "posts": [{ "text": "投稿", "time": "10月21日 20:10", "likes": 12 }] },
+    "sub": { "name": "裏のアカウントの表示名", "handle": "@id", "bio": "自己紹介", "posts": [{ "text": "投稿", "time": "10月21日 23:40", "likes": 0 }] }
+  },
   "deleted": [{ "kind": "種類（下書き・写真など）", "date": "10月21日", "text": "消したものの中身" }]
 }`;
 
@@ -28,7 +31,7 @@ const prompt = (name, user) => `あなたは物語の小道具を作る係です
 - ${user}のことは、${name}が他の人とやり取りする中で話題に出す形を優先する。${user}本人とのトークは入れても1人分まで。
 - メッセージの相手は、会話に出てきた人物を優先し、足りなければ世界観に合う人物を作る。相手ごとに口調と距離感を変える。"me" が${name}本人の発言。
 - 日付と時刻は物語の中の「今」に合わせ、新しいものほど最近にする。
-- 世界観にスマホが無い場合は、書簡・手帳・魔導具など合う私物に置き換え、device と apps の名前、金額の単位をそれに合わせる。
+- 世界観にスマホが無い場合は、書簡・手帳・魔導具など合う私物に置き換え、device と apps の名前、金額の単位をそれに合わせる。SNSが無い世界なら、表は掲示や公の日誌、裏は隠し日記や匿名の落書きなどに置き換える。
 - 注釈や説明、伏せ字は書かない。${name}本人が書いた・残したものだけを書く。
 
 # 分量
@@ -39,7 +42,10 @@ const prompt = (name, user) => `あなたは物語の小道具を作る係です
 - wallet: 4〜6件（1件は${user}に関係する出費）
 - calendar: 2〜4件
 - photos: 3〜4件
-- screentime: 4〜5件（${user}がらみの数字で本音を匂わせる）
+- sns: 表と裏の2つのアカウント。それぞれ posts を4〜5件
+  - 表（main）：他人に見せる前提の発言。仕事や付き合い向けの、取りつくろった自分。メッセージやメモより改まっている
+  - 裏（sub）：鍵をかけた愚痴や本音。ただし誰かに見られるかもしれない前提なので、名前や場所はぼかして書く。メモや下書きほど無防備ではない
+  - 表と裏で、同じ出来事を違う言い方で書いている投稿を1組入れる
 - deleted: 2〜3件（消した理由が透けて見えるもの。送らなかった文面、消した写真など）
 
 # 出力の形（このJSONだけを出力する。コードブロックの記号や前置きは書かない）
@@ -59,13 +65,16 @@ const SAMPLE = JSON.stringify({
   wallet: [{ shop: '駅前書店', category: '本', date: '10月21日', note: '参考書', amount: '-¥3,520' }, { shop: '花屋', category: '贈り物', date: '10月20日', note: '小さな花束', amount: '-¥1,800' }],
   calendar: [{ date: '10月24日', time: '16:30–18:00', title: '打ち合わせ', place: '会議室A' }],
   photos: [{ date: '10月20日', caption: '窓辺で眠っている猫' }, { date: '10月19日', caption: '二人分のコーヒーカップ' }],
-  screentime: [{ app: 'メッセージ', minutes: 192 }, { app: 'ブラウザ', minutes: 75 }, { app: '写真', minutes: 41 }],
+  sns: {
+    main: { name: 'ダミーさん', handle: '@dummy_official', bio: '仕事の記録と、ときどき猫。', posts: [{ text: '本日も無事に終了。関係者の皆さま、ありがとうございました。', time: '10月21日 19:02', likes: 24 }, { text: '窓辺の猫。今日はよく眠っていました。', time: '10月20日 12:30', likes: 51 }] },
+    sub: { name: 'ねむい', handle: '@nemui_0x', bio: '鍵。ひとりごと。', posts: [{ text: '無事に終了、とか書いたけど全然無事じゃない。胃が痛い。', time: '10月21日 23:48', likes: 0 }, { text: 'あの人の前だと調子が狂う。なんでだろ。', time: '10月21日 23:55', likes: 1 }] },
+  },
   deleted: [{ kind: 'メッセージの下書き', date: '10月21日', text: '今日はありがとう。また会' }, { kind: '写真', date: '10月20日', text: '隠し撮りになってしまった横顔' }],
 });
 
 const APPS = [
   ['messages', 'メッセージ', 'ai', '#3aa76d'], ['memos', 'メモ', 'book', '#c9972b'], ['searches', 'ブラウザ', 'globe', '#3d7fd6'], ['wallet', 'ウォレット', 'card', '#7d6ad6'],
-  ['calendar', 'カレンダー', 'calendar', '#d2574e'], ['photos', '写真', 'image', '#c75b97'], ['screentime', 'スクリーンタイム', 'clock', '#5c7389'], ['deleted', '最近削除', 'trash', '#6b6b73'],
+  ['calendar', 'カレンダー', 'calendar', '#d2574e'], ['photos', '写真', 'image', '#c75b97'], ['sns', 'SNS', 'at', '#2f9fb5'], ['screentime', 'スクリーンタイム', 'clock', '#5c7389'], ['deleted', '最近削除', 'trash', '#6b6b73'],
 ];
 
 export function initPhone(x) {
@@ -79,6 +88,9 @@ export function initPhone(x) {
     card: 'M3 6h18a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zM2 10h20',
     calendar: 'M4 5h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM16 3v4M8 3v4M3 10h18',
     clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
+    at: 'M16 12a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94',
+    heart: 'M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z',
+    lock: 'M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zM8 11V7a4 4 0 0 1 8 0v4',
   });
 
   let cur = null;   // 開いているスマホ { peek, app, index }
@@ -193,7 +205,7 @@ export function initPhone(x) {
         h('div', { class: 'ph-clock' }, h('b', { text: str(d.time) }), h('span', { text: str(d.date) })),
         d.wallpaper && h('p', { class: 'ph-wall', text: `壁紙：${str(d.wallpaper)}` }),
         ...list(d.notifications).map((n) => h('div', { class: 'ph-note' }, h('b', { text: str(n.app) }), h('span', { text: str(n.time) }), h('div', { text: str(n.text) }))),
-        h('div', { class: 'ph-grid' }, APPS.map(([key, , ic, color]) => h('button', { onclick: () => { cur.app = key; draw(); } },
+        h('div', { class: 'ph-grid' }, APPS.filter(([key]) => (key === 'sns' ? d.sns?.main || d.sns?.sub : list(d[key]).length)).map(([key, , ic, color]) => h('button', { onclick: () => { cur.app = key; draw(); } },
           h('span', { class: 'ph-icon', style: `background:${color}` }, icon(ic), key === 'messages' && unread > 0 && h('i', { text: unread })),
           h('span', { text: str(names[key]) })))),
         h('p', { class: 'ph-foot', text: `${cur.peek.at}件目の時点 ・ ${x.stamp(cur.peek.createdAt)} ・ ${cur.peek.model || ''}` }),
@@ -249,6 +261,19 @@ export function initPhone(x) {
       const all = list(d.photos);
       view = [top(str(names.photos), `${all.length}枚`, home),
         all.length ? h('div', { class: 'ph-photos' }, all.map((p) => h('div', {}, h('span', {}, icon('image')), h('p', { text: str(p.caption) }), h('small', { text: str(p.date) })))) : empty()];
+    } else if (app === 'sns') {
+      const tab = cur.index === 'sub' ? 'sub' : 'main';
+      const acc = d.sns?.[tab] || {};
+      const posts = list(acc.posts);
+      view = [top(str(names.sns), '', home),
+        h('div', { class: 'ph-tabs' }, [['main', '表のアカウント'], ['sub', '裏のアカウント']].map(([key, label]) =>
+          h('button', { class: tab === key ? 'on' : '', onclick: () => { cur.index = key; draw(); } }, key === 'sub' && icon('lock'), label))),
+        h('div', { class: 'ph-profile' },
+          h('span', { class: 'ph-avatar', text: str(acc.name).slice(0, 1) }),
+          h('div', { class: 'ph-main wrap' }, h('b', { text: str(acc.name) }), h('span', { text: str(acc.handle) }), acc.bio && h('span', { class: 'bio', text: str(acc.bio) }))),
+        posts.length ? card(...posts.map((p) => h('div', { class: 'ph-post' },
+          h('p', { text: str(p.text) }),
+          h('small', {}, str(p.time), p.likes != null && h('span', {}, icon('heart'), str(p.likes)))))) : empty()];
     } else if (app === 'screentime') {
       const all = list(d.screentime);
       const max = Math.max(1, ...all.map((s) => Number(s.minutes) || 0));

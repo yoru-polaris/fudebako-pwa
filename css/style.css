@@ -316,3 +316,13 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .meta.usage { margin: 6px 0 0; }
 .usagegrid { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin-top: 8px; font-size: 14px; }
 .usagegrid span { color: var(--sub); } .usagegrid b { font-weight: 600; text-align: right; }
+#phone .ph-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+#phone .ph-tabs button { flex: 1; text-align: center; padding: 8px 0; border-radius: 999px; background: #1c1d24; color: #9a9ba6; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+#phone .ph-tabs button.on { background: var(--pa); color: #0d1730; font-weight: 700; }
+.ph-tabs .ic { width: 14px; height: 14px; }
+.ph-profile { display: flex; gap: 12px; align-items: flex-start; margin: 4px 2px 14px; }
+.ph-profile .bio { color: #cfd0d8; margin-top: 4px; }
+.ph-post { padding: 13px 14px; border-bottom: 1px solid #2a2b33; }
+.ph-post p { margin: 0 0 6px; white-space: pre-wrap; line-height: 1.6; font-size: 15px; }
+.ph-post small { display: flex; justify-content: space-between; align-items: center; color: #7f808b; font-size: 12px; }
+.ph-post small span { display: inline-flex; align-items: center; gap: 4px; } .ph-post .ic { width: 13px; height: 13px; }
