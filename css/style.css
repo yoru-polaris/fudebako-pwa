@@ -217,3 +217,31 @@ svg { width: 22px; height: 22px; display: block; }
 .msg .tools.colored .c-copy { background: #b9557f; }
 .msg .tools.colored .c-retry { background: #56935a; }
 .msg .tools.colored .c-go { background: #4b82bd; }
+
+/* ---- はっきりした配色: ヘッダーを濃い色に ---- */
+.ic { display: inline-block; width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vertical-align: -3px; margin-right: 6px; }
+.withic { display: flex; align-items: center; }
+.withic .ic { width: 19px; height: 19px; margin-right: 10px; color: var(--accent); }
+.iconbtn .ic, .acts .ic { margin: 0; }
+.picchip, .filechip, #pending button { display: inline-flex; align-items: center; }
+.treerow .t { display: flex; align-items: center; }
+:root { --head: #3b6ea5; --head-text: #fff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) { --head: #2a2d33; --head-text: #e8e6e1; } }
+[data-theme=sumi] { --head: #2a2d33; --head-text: #e8e6e1; }
+[data-theme=sakura] { --accent: #c2476a; --head: #c2476a; --bubble: #f6cfd9; --line: #eac6cf; }
+[data-theme=sora] { --accent: #1f78b4; --head: #1f78b4; --bubble: #c9e2f5; --line: #c5d9e8; }
+[data-theme=wakakusa] { --accent: #5f8f2f; --head: #5f8f2f; --bubble: #d6e8b9; --line: #cddcb6; }
+[data-theme=sepia] { --head: #8a5c24; --bubble: #e6cf9f; }
+[data-theme=aiyo] { --head: #24345c; --head-text: #e3e8f2; }
+[data-theme=azuki] { --head: #5a2f3c; --head-text: #efe4e2; }
+[data-theme=aizumi] { --bg: #f7f5ef; --text: #1c2433; --sub: #5f6b80; --line: #d0d6e2; --accent: #26437a; --bubble: #cfdbf2; --head: #26437a; }
+[data-theme=beni] { --bg: #fbf4f2; --text: #33191c; --sub: #86656a; --line: #e8cccd; --accent: #a3263c; --bubble: #f4ccd1; --head: #a3263c; }
+[data-theme=matcha] { --bg: #f3f5ea; --text: #1f2a1a; --sub: #63705a; --line: #cfd9bc; --accent: #3d6b2a; --bubble: #d1e3b8; --head: #3d6b2a; }
+[data-theme=sumire] { --bg: #f6f3fa; --text: #2a2140; --sub: #736a8c; --line: #d9cfeb; --accent: #6a45b0; --bubble: #ddcef5; --head: #6a45b0; }
+[data-theme=yozakura] { --bg: #1a1420; --panel: #261d30; --text: #f0e6f2; --sub: #a996b0; --line: #3d2f4a; --accent: #e88fb5;
+  --accent-text: #2b0f1e; --bubble: #4a2b4a; --danger: #f2877f; --field: #1a1420; --head: #4a2450; --head-text: #f6e9f3; color-scheme: dark; }
+#topbar { background: var(--head); color: var(--head-text); border-bottom: 0; box-shadow: 0 1px 4px rgba(0,0,0,.18); position: relative; z-index: 2; }
+#topbar .iconbtn, #chatTitle { color: inherit; }
+#topbar .chip { background: color-mix(in srgb, currentColor 15%, transparent); border-color: color-mix(in srgb, currentColor 28%, transparent); color: inherit; }
+#topbar .chip svg { color: inherit; }
+.swatch i { height: 30px; }

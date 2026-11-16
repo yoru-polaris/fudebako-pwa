@@ -170,7 +170,7 @@ async function* dummy(conn, { messages, signal }) {
 }
 
 export function streamChat(conn, req) {
-  if (!conn) throw new Error('接続先がありません。⚙ 設定 →「接続先」で追加してください。');
+  if (!conn) throw new Error('接続先がありません。歯車のマークの設定 →「接続先」で追加してください。');
   const merged = [];
   for (const m of req.messages) {
     if (!m.text && !m.images?.length) continue;
@@ -182,7 +182,7 @@ export function streamChat(conn, req) {
   }
   req = { ...req, messages: merged };
   if (conn.type === 'dummy') return dummy(conn, req);
-  if (!conn.apiKey?.trim()) throw new Error('APIキーが入力されていません。⚙ 設定 →「接続先」で入力してください。');
-  if (!conn.model?.trim()) throw new Error('モデル名が入力されていません。⚙ 設定 →「接続先」で入力してください。');
+  if (!conn.apiKey?.trim()) throw new Error('APIキーが入力されていません。歯車のマークの設定 →「接続先」で入力してください。');
+  if (!conn.model?.trim()) throw new Error('モデル名が入力されていません。歯車のマークの設定 →「接続先」で入力してください。');
   return conn.type === 'openai' ? openai(conn, req) : gemini(conn, req);
 }

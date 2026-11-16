@@ -17,6 +17,36 @@ function h(tag, props = {}, ...kids) {
   return el;
 }
 
+// 線画アイコン（絵文字は端末ごとに見た目が変わるので使わない）
+const ICONS = {
+  pencil: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
+  book: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z',
+  branch: 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9',
+  summary: 'M17 10H3M21 6H3M21 14H3M13 18H3',
+  fold: 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
+  unfold: 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
+  copy: 'M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+  save: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
+  trash: 'M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2',
+  user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  ai: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  image: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8.5 11a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 16l-5-5-9 9',
+  clip: 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
+  spark: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
+};
+
+function icon(name) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'ic');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', ICONS[name]);
+  svg.append(path);
+  return svg;
+}
+
 // ---------- 状態 ----------
 const S = {
   settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null, lastCharIds: [],
@@ -42,9 +72,10 @@ const activeConn = () => S.settings.connections.find((c) => c.id === S.settings.
 const modelLabel = (c) => (!c ? 'モデル未選択' : c.type === 'dummy' ? 'ダミーAI' : c.model || 'モデル未選択');
 
 const THEMES = {
-  auto: ['自動', 'linear-gradient(90deg,#f6f4ef 50%,#17181b 50%)'],
-  kinari: ['生成り', '#f6f4ef'], sakura: ['桜', '#f8dfe5'], sora: ['空', '#d9eaf6'], wakakusa: ['若草', '#e1eccf'],
-  sepia: ['セピア', '#ead9b8'], sumi: ['墨', '#212327'], aiyo: ['藍夜', '#1b2540'], azuki: ['小豆', '#4a2c36'],
+  auto: ['自動', 'linear-gradient(90deg,#3b6ea5 50%,#2a2d33 50%)'],
+  kinari: ['生成り', '#3b6ea5'], aizumi: ['藍墨', '#26437a'], sora: ['空', '#1f78b4'], matcha: ['抹茶', '#3d6b2a'], wakakusa: ['若草', '#5f8f2f'],
+  sakura: ['桜', '#c2476a'], beni: ['紅', '#a3263c'], sumire: ['菫', '#6a45b0'], sepia: ['セピア', '#8a5c24'],
+  sumi: ['墨', '#2a2d33'], aiyo: ['藍夜', '#24345c'], azuki: ['小豆', '#5a2f3c'], yozakura: ['夜桜', '#4a2450'],
 };
 
 function applyUi() {
@@ -54,7 +85,7 @@ function applyUi() {
   root.style.setProperty('--msg-size', `${ui.fontSize}px`);
   root.style.setProperty('--veil', `${ui.bgVeil}%`);
   root.style.setProperty('--bubble-alpha', `${ui.bubbleAlpha}%`);
-  const color = getComputedStyle(root).getPropertyValue('--panel').trim();
+  const color = getComputedStyle($('#topbar')).backgroundColor;
   document.querySelectorAll('meta[name=theme-color]').forEach((m) => { m.content = color; m.removeAttribute('media'); });
 }
 
@@ -206,7 +237,7 @@ function expandImages(text) {
 
 function picture(url, show) {
   if (!show) {
-    const chip = h('button', { class: 'picchip', text: '🖼 画像を表示', onclick: () => chip.replaceWith(picture(url, true)) });
+    const chip = h('button', { class: 'picchip', onclick: () => chip.replaceWith(picture(url, true)) }, icon('image'), '画像を表示');
     return chip;
   }
   let src = url;
@@ -275,15 +306,15 @@ function messageEl(m, index) {
   const bubble = h('div', { class: `bubble ${m.collapsed ? 'folded' : ''}`, onclick: m.collapsed ? (S.busy ? null : fold) : tapTools });
   if (ui.showMeta) bubble.append(h('div', { class: 'meta', text: [`#${index + 1}`, m.model, new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' / ') }));
   if (m.collapsed) {
-    bubble.append(h('div', { class: 'body', text: expandImages(m.text).replace(IMG_URL, '🖼').trim().slice(0, 200) }));
+    bubble.append(h('div', { class: 'body', text: expandImages(m.text).replace(IMG_URL, '〔画像〕').trim().slice(0, 200) }));
   } else {
     if (m.thought) bubble.append(h('details', { class: 'thought' }, h('summary', { text: '思考' }), h('div', { text: m.thought })));
     bubble.append(h('div', { class: 'body' }, richText(m.text)));
     if (m.files?.length) bubble.append(h('div', { class: 'files' }, m.files.map((f) => f.kind === 'image'
       ? h('img', { src: `data:${f.mime};base64,${f.data}`, alt: f.name })
-      : h('span', { class: 'filechip', text: `📎 ${f.name}` }))));
+      : h('span', { class: 'filechip' }, icon('clip'), f.name))));
     if (m.notice) bubble.append(h('div', { class: 'hint', text: `※ ${m.notice}` }));
-    if (m.loaded?.length) bubble.append(h('div', { class: 'hint', text: `📖 詳細を読み込み: ${m.loaded.join('、')}` }));
+    if (m.loaded?.length) bubble.append(h('div', { class: 'hint' }, icon('book'), `詳細を読み込み: ${m.loaded.join('、')}`));
   }
   el.append(bubble);
 
@@ -339,7 +370,7 @@ function render() {
     const ready = conn?.apiKey || conn?.type === 'dummy';
     const starts = chatChars(S.chat).filter((c) => c.greeting?.trim());
     box.append(h('div', { class: 'empty' },
-      ready ? 'メッセージを入力して始めましょう' : 'まず右上の ⚙ から「接続先」にAPIキーを入力してください',
+      ready ? 'メッセージを入力して始めましょう' : 'まず右上の歯車のマークから「接続先」にAPIキーを入力してください',
       starts.map((c) => h('div', { class: 'btnrow center' }, h('button', { text: `「${c.name}」の始まり方で始める`, onclick: () => startWith(c) })))));
   }
   if (S.error) {
@@ -456,9 +487,9 @@ function openTree() {
     h('p', { class: 'hint', text: rows.length ? `全部で ${S.msgs.size} 件、枝の先は ${leaves} 本あります。行をタップするとその枝に切り替わります。` : 'まだメッセージがありません。' }),
     ...rows.map((r) => h('div', { class: `treerow ${onPath.has(r.start.id) ? 'on' : ''}`, style: `margin-left:${Math.min(r.depth, 8) * 14}px` },
       h('button', { class: 'plain', onclick: () => jump(r) },
-        h('div', { class: 't', text: `${r.start.role === 'user' ? '🧑' : '🤖'} ${expandImages(r.start.text).replace(IMG_URL, '🖼').replace(/\s+/g, ' ').slice(0, 60) || '（添付のみ）'}` }),
+        h('div', { class: 't' }, icon(r.start.role === 'user' ? 'user' : 'ai'), expandImages(r.start.text).replace(IMG_URL, '〔画像〕').replace(/\s+/g, ' ').slice(0, 60) || '（添付のみ）'),
         h('div', { class: 'd', text: `${r.count} 件${r.kids.length ? `　→ ここから ${r.kids.length} つに分岐` : '　・枝の先'}${onPath.has(r.last.id) && !r.kids.length ? '　✔ 今ここ' : ''}　${stamp(r.last.createdAt)}` })),
-      h('button', { class: 'iconbtn', text: '🗑', 'aria-label': 'この枝を削除', onclick: async () => { await removeMessage(r.start); if (!$('#sheet').hidden) openTree(); } }))),
+      h('button', { class: 'iconbtn', 'aria-label': 'この枝を削除', onclick: async () => { await removeMessage(r.start); if (!$('#sheet').hidden) openTree(); } }, icon('trash')))),
   );
   show('#sheet');
 }
@@ -554,7 +585,7 @@ function saveText(list) {
 function openChatMenu() {
   $('#sheetTitle').textContent = 'このチャット';
   const path = pathTo(S.chat.leafId);
-  const item = (text, fn) => h('div', { class: 'row' }, h('button', { class: 'plain', text, onclick: fn }));
+  const item = (ic, text, fn) => h('div', { class: 'row' }, h('button', { class: 'plain withic', onclick: fn }, icon(ic), text));
   const foldAll = async (collapsed) => {
     path.forEach((m) => (m.collapsed = collapsed));
     closePanels();
@@ -562,22 +593,22 @@ function openChatMenu() {
   };
   const copy = (list) => navigator.clipboard.writeText(list.map((m) => m.text).join('\n\n')).then(() => { toast('コピーしました'); closePanels(); });
   $('#sheetBody').replaceChildren(
-    item('✏️ 名前を変える', async () => {
+    item('pencil', '名前を変える', async () => {
       const name = prompt('チャットの名前', S.chat.title);
       if (name == null) return;
       S.chat.title = name.trim();
       if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
       closePanels();
     }),
-    item(`📖 今回の話${S.chat.note?.trim() ? '（設定あり）' : ''}`, openNote),
-    item('🌳 分岐ツリー', openTree),
-    item(`♻️ あらすじ（要約）${S.chat.summary ? (S.chat.summaryOn === false ? '（オフ）' : '（あり）') : ''}`, openSummary),
-    item('▸ すべてたたむ', () => foldAll(true)),
-    item('▾ すべてひらく', () => foldAll(false)),
-    item('📋 全文をコピー（今見えている枝）', () => copy(path)),
-    item('📋 AIの文章だけコピー', () => copy(path.filter((m) => m.role === 'assistant'))),
-    item('💾 テキストファイルで保存（全文）', () => saveText(path)),
-    item('💾 テキストファイルで保存（AIの文章だけ）', () => saveText(path.filter((m) => m.role === 'assistant'))),
+    item('book', `今回の話${S.chat.note?.trim() ? '（設定あり）' : ''}`, openNote),
+    item('branch', '分岐ツリー', openTree),
+    item('summary', `あらすじ（要約）${S.chat.summary ? (S.chat.summaryOn === false ? '（オフ）' : '（あり）') : ''}`, openSummary),
+    item('fold', 'すべてたたむ', () => foldAll(true)),
+    item('unfold', 'すべてひらく', () => foldAll(false)),
+    item('copy', '全文をコピー（今見えている枝）', () => copy(path)),
+    item('copy', 'AIの文章だけコピー', () => copy(path.filter((m) => m.role === 'assistant'))),
+    item('save', 'テキストファイルで保存（全文）', () => saveText(path)),
+    item('save', 'テキストファイルで保存（AIの文章だけ）', () => saveText(path.filter((m) => m.role === 'assistant'))),
   );
   show('#sheet');
 }
@@ -605,7 +636,7 @@ function apiMessage(m) {
 function renderPending() {
   const box = $('#pending');
   box.hidden = !S.pending.length;
-  box.replaceChildren(...S.pending.map((f) => h('button', { text: `${f.kind === 'image' ? '🖼' : '📎'} ${f.name} ✕`, onclick: () => { S.pending = S.pending.filter((x) => x !== f); renderPending(); } })));
+  box.replaceChildren(...S.pending.map((f) => h('button', { onclick: () => { S.pending = S.pending.filter((x) => x !== f); renderPending(); } }, icon(f.kind === 'image' ? 'image' : 'clip'), `${f.name} ✕`)));
   updateBar();
 }
 
@@ -812,14 +843,14 @@ function openDrawer(keepSearch) {
         h('div', { class: 't', text: c.title || '（無題）' }),
         h('div', { class: 'd', text: `作成 ${stamp(c.createdAt)}　更新 ${stamp(c.updatedAt)}` })),
       h('div', { class: 'acts' },
-        h('button', { text: '✏️', 'aria-label': '名前を変える', onclick: async () => {
+        h('button', { 'aria-label': '名前を変える', onclick: async () => {
           const name = prompt('チャットの名前', c.title);
           if (name == null) return;
           c.title = name.trim();
           await db.put('chats', c);
           render();
           openDrawer();
-        } }),
+        } }, icon('pencil')),
         h('button', { text: '出力', onclick: () => exportChat(c) }),
         h('button', { text: '複製', onclick: () => duplicateChat(c) }),
         h('button', { class: 'danger', text: '削除', onclick: () => removeChat(c) })),
@@ -1005,9 +1036,9 @@ function connCard(c) {
       for await (const ev of streamChat(c, { system: '', messages: [{ role: 'user', text: 'こんにちは。ひとことで返事をしてください。' }] })) {
         if (ev.text) text += ev.text;
       }
-      result.textContent = text ? `✅ つながりました\n返事: ${text}` : '⚠️ つながりましたが、返事が空でした。';
+      result.textContent = text ? `【成功】つながりました\n返事: ${text}` : '【注意】つながりましたが、返事が空でした。';
     } catch (e) {
-      result.textContent = `❌ ${e.message}`;
+      result.textContent = `【失敗】${e.message}`;
     }
     btn.disabled = false;
   };
@@ -1104,7 +1135,7 @@ async function tidyCard(c, btn) {
   } catch (e) {
     alert(`整理できませんでした。\n${e instanceof SyntaxError ? 'AIの返事が決まった形になっていませんでした。もう一度試すか、別のモデルで試してください。' : e.message}`);
     btn.disabled = false;
-    btn.textContent = '✨ AIに整理してもらう';
+    btn.replaceChildren(icon('spark'), 'AIに整理してもらう');
   }
 }
 
@@ -1132,7 +1163,7 @@ function charCard(c) {
         c.bg && h('button', { class: 'danger', text: 'やめる', onclick: async () => { delete c.bg; await save(); applyBg(); renderSettings(); } }),
         bgPick)),
     h('div', { class: 'btnrow' },
-      type === 'char' && h('button', { text: '✨ AIに整理してもらう', onclick: (e) => tidyCard(c, e.currentTarget) }),
+      type === 'char' && h('button', { onclick: (e) => tidyCard(c, e.currentTarget) }, icon('spark'), 'AIに整理してもらう'),
       h('button', { class: 'danger', text: '削除', onclick: async () => {
       if (!confirm(`「${c.name}」を削除しますか？`)) return;
       S.chars = S.chars.filter((x) => x !== c);
