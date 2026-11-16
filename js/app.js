@@ -1162,7 +1162,7 @@ function showFatal(e) {
     `アプリの起動に失敗しました。保存してあるデータは消えていません。\n\n（${e?.message || e}）`,
     h('div', { class: 'btnrow' },
       h('button', { text: 'データをファイルに書き出す', onclick: () => exportData().catch((x) => alert(`書き出せませんでした。\n${x.message}`)) }),
-      h('button', { text: '最新版に更新して開き直す', onclick: refreshApp }))));
+      h('button', { text: 'キャッシュを削除して開き直す', onclick: refreshApp }))));
 }
 
 async function exportData() {
@@ -1333,9 +1333,9 @@ function renderSettings() {
         h('p', { class: 'hint', text: '書き出したファイルを読み込みます。今あるチャットは消えず、追加されます。' }),
         h('button', { text: 'ファイルを選ぶ', onclick: () => picker.click() }), picker),
       h('div', { class: 'card' },
-        h('strong', { text: 'アプリを更新' }),
-        h('p', { class: 'hint', text: '新しい機能が反映されないときに押してください。チャットや設定は消えません。' }),
-        h('button', { text: '最新版に更新する', onclick: refreshApp })),
+        h('strong', { text: 'キャッシュ削除・アプリを更新' }),
+        h('p', { class: 'hint', text: 'アプリ本体のキャッシュ（一時保存）を削除して、最新版を読み込み直します。新しい機能が反映されないときや、動きが重い・おかしいときに押してください。チャット・設定・APIキーは消えません。' }),
+        h('button', { text: 'キャッシュを削除して開き直す', onclick: refreshApp })),
       usage,
       h('div', { class: 'card' },
         h('strong', { text: 'すべて消す' }),
