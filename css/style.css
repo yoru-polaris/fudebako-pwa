@@ -363,3 +363,20 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .chatrow .p { font-size: 13px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chatrow .acts .pinned { color: var(--accent); border-color: var(--accent); }
 .chatrow .acts .ic { margin: 0; }
+
+/* ---- 本文の書体・紙面表示 ---- */
+.msg .body { font-family: var(--body-font, inherit); line-height: var(--body-lh, 1.75); }
+#messages.paper .msg.assistant .bubble:not(.side) { background: none; border: 0; box-shadow: none; padding: 4px 2px; -webkit-backdrop-filter: none; backdrop-filter: none; }
+#messages.paper .msg.assistant { margin-bottom: 26px; }
+#messages.paper.hasbg .msg.assistant .bubble:not(.side) { background: color-mix(in srgb, var(--bg) 72%, transparent); border-radius: 10px; padding: 8px 12px; }
+
+/* ---- 操作ボタン：配色に合わせる ---- */
+.msg .tools.themed button { border-radius: 7px; padding: 2px 11px; min-height: 28px; font-size: 13px; font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); }
+.msg .tools.themed .c-go { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.msg .tools.themed .c-retry { background: color-mix(in srgb, var(--accent) 32%, var(--panel)); }
+.msg .tools.themed .c-del { color: var(--danger); }
+.msg .tools.themed button:disabled { opacity: .35; }
+.msg .tools .c-more { font-weight: 700; letter-spacing: 1px; }
+.msg .tools.colored .c-more { background: #8a8a8a; }
+#messages.hasbg .tools.themed button { text-shadow: none; }

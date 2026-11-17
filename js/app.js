@@ -62,7 +62,7 @@ const S = {
   settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null, lastCharIds: [],
     summary: { connId: '', model: '', auto: false, threshold: 40, keep: 10 },
     ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false,
-      kbGap: 'auto', replaceUser: true, toolsMode: 'always', toolColors: true, showMeta: true, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
+      kbGap: 'auto', replaceUser: true, toolsMode: 'always', toolColors: true, toolStyle: '', compact: true, showMeta: true, font: 'gothic', lineHeight: '1.75', paper: false, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
   prompts: [],
   chars: [],
   chats: [],
@@ -93,6 +93,9 @@ function applyUi() {
   const root = document.documentElement;
   if (ui.theme === 'auto') delete root.dataset.theme; else root.dataset.theme = ui.theme;
   root.style.setProperty('--msg-size', `${ui.fontSize}px`);
+  root.style.setProperty('--body-font', ui.font === 'mincho' ? '"Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "Noto Serif JP", serif' : 'inherit');
+  root.style.setProperty('--body-lh', ui.lineHeight || '1.75');
+  $('#messages').classList.toggle('paper', !!ui.paper);
   fitViewport();
   root.style.setProperty('--veil', `${ui.bgVeil}%`);
   root.style.setProperty('--bubble-alpha', `${ui.bubbleAlpha}%`);
@@ -397,7 +400,9 @@ function messageEl(m, index) {
   const face = !m.side && S.faces?.[m.role];
   if (iconUrl(face)) bubble.append(h('div', { class: 'who' }, avatar(face, 'av sm'), face.name));
   if (m.side) bubble.append(h('div', { class: 'sidetag' }, icon('spark'), `番外：${m.sideName || '差し込み'}`));
-  if (ui.showMeta) bubble.append(h('div', { class: 'meta', text: [`#${index + 1}`, m.model, new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' / ') }));
+  const more = S.moreFor === m.id;
+  const showInfo = ui.showMeta && (!ui.compact || more);
+  if (showInfo) bubble.append(h('div', { class: 'meta', text: [`#${index + 1}`, m.model, new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' / ') }));
   if (m.collapsed) {
     bubble.append(h('div', { class: 'body', text: expandImages(m.text).replace(IMG_URL, '〔画像〕').trim().slice(0, 200) }));
   } else {
@@ -407,7 +412,7 @@ function messageEl(m, index) {
       ? h('img', { src: `data:${f.mime};base64,${f.data}`, alt: f.name })
       : h('span', { class: 'filechip' }, icon('clip'), f.name))));
     if (m.notice) bubble.append(h('div', { class: 'hint', text: `※ ${m.notice}` }));
-    if (m.usage && ui.showMeta) bubble.append(h('div', { class: 'meta usage', text: usageText(m.usage) }));
+    if (m.usage && showInfo) bubble.append(h('div', { class: 'meta usage', text: usageText(m.usage) }));
     if (m.loaded?.length) bubble.append(h('div', { class: 'hint' }, icon('book'), `詳細を読み込み: ${m.loaded.join('、')}`));
   }
   el.append(bubble);
@@ -415,7 +420,8 @@ function messageEl(m, index) {
   if (!S.busy && (ui.toolsMode !== 'tap' || m.id === S.chat.leafId || S.toolsFor === m.id)) {
     const sibs = childrenOf(m.parentId);
     const idx = sibs.indexOf(m);
-    const tools = h('div', { class: `tools ${ui.toolColors ? 'colored' : ''}` });
+    const style = ui.toolStyle === 'color' ? 'colored' : ui.toolStyle === 'plain' ? '' : 'themed';
+    const tools = h('div', { class: `tools ${style}` });
     if (sibs.length > 1) {
       tools.append(
         h('button', { text: '◀', disabled: idx === 0, 'aria-label': '前の枝', onclick: () => switchBranch(sibs[idx - 1]) }),
@@ -427,12 +433,16 @@ function messageEl(m, index) {
     if (m.role === 'assistant' && m.id === S.chat.leafId) tools.append(h('button', { class: 'c-go', text: '続き', onclick: () => continueFrom(m) }));
     if (m.side) tools.append(h('button', { class: 'c-retry', text: 'やり直す', onclick: () => runInsert({ name: m.sideName, text: m.sideText || '', mode: 'side' }, m.parentId) }));
     else if (m.role === 'assistant') tools.append(h('button', { class: 'c-retry', text: '再生成', onclick: () => generate(m.parentId) }));
-    tools.append(
-      h('button', { class: 'c-edit', text: '編集', onclick: () => { S.editing = m.id; render(); } }),
-      h('button', { class: 'c-copy', text: 'コピー', onclick: () => navigator.clipboard.writeText(m.text).then(() => toast('コピーしました')) }),
-      h('button', { class: 'c-del', text: '削除', onclick: () => removeMessage(m) }),
-      h('span', { class: 'cnt', text: `${m.text.length.toLocaleString()} / ${S.totalChars.toLocaleString()}字` }),
-    );
+    if (!ui.compact || more) {
+      tools.append(
+        h('button', { class: 'c-edit', text: '編集', onclick: () => { S.editing = m.id; S.moreFor = null; render(); } }),
+        h('button', { class: 'c-copy', text: 'コピー', onclick: () => navigator.clipboard.writeText(m.text).then(() => toast('コピーしました')) }),
+        h('button', { class: 'c-del', text: '削除', onclick: () => removeMessage(m) }),
+        h('span', { class: 'cnt', text: `${m.text.length.toLocaleString()} / ${S.totalChars.toLocaleString()}字` }),
+      );
+    }
+    // よく使うボタン以外は「…」の中にしまう
+    if (ui.compact) tools.append(h('button', { class: 'c-more', text: more ? '閉じる' : '…', 'aria-label': more ? '閉じる' : 'ほかの操作', onclick: () => { S.moreFor = more ? null : m.id; render(); } }));
     el.append(tools);
   }
   return el;
@@ -1573,7 +1583,10 @@ function renderSettings() {
         h('div', { class: 'hint', text: '「自動」はiPhoneのライト／ダーク設定に合わせます。' })),
       h('div', { class: 'card' },
         h('strong', { text: '文字' }),
-        field('本文の文字サイズ', select(ui, 'fontSize', { 14: '小', 16: '標準', 18: '大', 20: '特大' }, save))),
+        field('本文の文字サイズ', select(ui, 'fontSize', [['14', '小'], ['16', '標準'], ['18', '大'], ['20', '特大']], save)),
+        field('本文の書体', select(ui, 'font', [['gothic', 'ゴシック体（標準）'], ['mincho', '明朝体（小説向け）']], save)),
+        field('行の間隔', select(ui, 'lineHeight', [['1.6', '狭め'], ['1.75', '標準'], ['2', '広め'], ['2.3', 'とても広め']], save)),
+        check('paper', 'AIの返事を吹き出しにせず、紙面のように表示する', '長い地の文を読みやすくします。自分の発言と番外は吹き出しのままです。')),
       h('div', { class: 'card' },
         h('strong', { text: '背景画像' }),
         h('div', { class: 'btnrow' },
@@ -1601,8 +1614,9 @@ function renderSettings() {
       h('div', { class: 'card' },
         h('strong', { text: 'メッセージのボタン' }),
         field('ボタンの出し方', select(ui, 'toolsMode', { always: 'いつも表示する', tap: '吹き出しをタップしたときだけ表示する' }, save), '「タップしたときだけ」でも、最後のメッセージにはいつも表示されます。'),
-        check('toolColors', 'ボタンを色分けする'),
-        check('showMeta', '番号・モデル名・時刻を吹き出しに表示する')),
+        check('compact', 'よく使うボタンだけ出し、ほかは「…」にまとめる', '編集・コピー・削除・文字数・番号や使用量は「…」を押すと出ます。'),
+        field('ボタンの色', select(ui, 'toolStyle', [['theme', '配色に合わせる'], ['color', '色分けする（緑・橙・赤など）'], ['plain', '色を付けない']], save)),
+        check('showMeta', '番号・モデル名・時刻・使用量を表示する')),
     );
   } else {
     const usage = h('p', { class: 'hint', text: '' });
@@ -1659,6 +1673,7 @@ async function loadAll() {
   const uiDefaults = S.settings.ui;
   Object.assign(S.settings, settings);
   S.settings.ui = { ...uiDefaults, ...settings?.ui };
+  if (!S.settings.ui.toolStyle) S.settings.ui.toolStyle = S.settings.ui.toolColors === false ? 'plain' : 'theme';
   if (S.settings.lastHeroId === undefined) {
     const isHero = (id) => chars.find((c) => c.id === id)?.type === 'hero';
     S.settings.lastHeroId = (S.settings.lastCharIds || []).find(isHero) ?? null;
