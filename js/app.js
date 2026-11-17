@@ -35,6 +35,11 @@ const ICONS = {
   image: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8.5 11a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 16l-5-5-9 9',
   clip: 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
   gauge: 'M12 21a9 9 0 1 1 9-9M12 12l5-3M3 12h2M12 3v2',
+  sliders: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
+  radioOn: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  radioOff: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z',
+  boxOn: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 12l3 3 5-6',
+  boxOff: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
   spark: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
 };
 
@@ -106,12 +111,35 @@ function newConn() {
 }
 
 const CHAR_TYPES = { char: '登場人物', hero: '主人公（自分が演じる・語る人物）', world: '世界設定', doc: '資料（まるごと読み込む）' };
-const chatChars = (chat) => (chat.charIds || []).map((id) => S.chars.find((c) => c.id === id)).filter(Boolean);
+// このチャットで使う登場人物・世界設定・資料（主人公は別扱いなので含めない）
+const chatChars = (chat) => (chat.charIds || []).map((id) => S.chars.find((c) => c.id === id)).filter((c) => c && c.type !== 'hero');
+
+// このチャットの主人公。保存したカードか、この話だけの主人公（custom）。なければ null。
+function heroOf(chat) {
+  if (!chat) return null;
+  if (chat.heroId === 'custom') {
+    const hc = chat.heroCustom || {};
+    return hc.name?.trim() || hc.text?.trim() ? { name: hc.name?.trim() || '主人公', text: hc.text || '' } : null;
+  }
+  const card = S.chars.find((c) => c.id === chat.heroId && c.type === 'hero');
+  return card ? { name: card.name || '主人公', text: card.core || '', card } : null;
+}
+
+// 以前の形式（主人公も charIds に入っていた）を、主人公＝heroId に分ける
+function normalizeChat(chat) {
+  if (chat.heroId === undefined) {
+    const ids = chat.charIds || [];
+    const isHero = (id) => S.chars.find((c) => c.id === id)?.type === 'hero';
+    chat.heroId = ids.find(isHero) ?? null;
+    chat.charIds = ids.filter((id) => !isHero(id));
+  }
+  return chat;
+}
 
 // {{user}} {{char}} と、単独の「User」を、選んでいる主人公・登場人物の名前に置き換える
 function fillNames(chat, text) {
   const chars = chatChars(chat);
-  const hero = chars.find((c) => c.type === 'hero')?.name;
+  const hero = heroOf(chat)?.name;
   const cast = chars.find((c) => (c.type || 'char') === 'char')?.name;
   if (cast) text = text.replace(/\{\{char\}\}/gi, () => cast);
   if (hero) {
@@ -144,7 +172,12 @@ function buildSystem(chat, recentText, summaryText) {
     return text;
   };
   const chars = chatChars(chat);
+  const hero = heroOf(chat);
   for (const [type, title] of [['world', '# 世界設定'], ['hero', '# 主人公（ユーザーが演じる・語る人物）'], ['char', '# 登場人物'], ['doc', '# 資料']]) {
+    if (type === 'hero') {
+      if (hero) parts.push(`${title}\n\n## ${hero.name}\n${hero.text}`.trim());
+      continue;
+    }
     const list = chars.filter((c) => (c.type || 'char') === type);
     if (list.length) parts.push(`${title}\n\n${list.map(block).join('\n\n')}`);
   }
@@ -153,10 +186,15 @@ function buildSystem(chat, recentText, summaryText) {
   return { system: fillNames(chat, parts.filter(Boolean).join('\n\n')), loaded };
 }
 
+// 新しいチャットは、今開いているチャットの選び方（プロンプト・主人公・登場人物）を引き継ぐ。
+// 開いているチャットがなければ、最後に選んだものを使う。
 function blankChat() {
-  const promptId = promptOf(S.settings.lastPromptId) ? S.settings.lastPromptId : null;
-  const charIds = (S.settings.lastCharIds || []).filter((id) => S.chars.some((c) => c.id === id));
-  return { id: uid(), title: '', promptId, charIds, createdAt: Date.now(), updatedAt: Date.now(), leafId: null };
+  const from = S.chat && normalizeChat(S.chat);
+  const promptId = promptOf(from ? from.promptId : S.settings.lastPromptId) ? (from ? from.promptId : S.settings.lastPromptId) : null;
+  const charIds = (from ? from.charIds || [] : S.settings.lastCharIds || []).filter((id) => S.chars.some((c) => c.id === id && c.type !== 'hero'));
+  const lastHero = from ? from.heroId : S.settings.lastHeroId;
+  const heroId = S.chars.some((c) => c.id === lastHero && c.type === 'hero') ? lastHero : null;   // この話だけの主人公は引き継がない
+  return { id: uid(), title: '', promptId, charIds, heroId, createdAt: Date.now(), updatedAt: Date.now(), leafId: null };
 }
 
 // ---------- 会話の木 ----------
@@ -216,7 +254,7 @@ const PAGE = 60;
 
 async function openChat(chat) {
   S.abort?.abort();
-  S.chat = chat;
+  S.chat = normalizeChat(chat);
   S.error = '';
   S.editing = null;
   S.showCount = PAGE;
@@ -379,13 +417,12 @@ function messageEl(m, index) {
 
 function render() {
   $('#chatTitle').textContent = S.chat.title || '新しいチャット';
-  $('#promptChip span').textContent = promptOf(S.chat.promptId)?.name || 'プロンプトなし';
   $('#modelChip span').textContent = modelLabel(activeConn());
   // 接続先が複数あるときは、同じ名前のモデルを見分けられるよう接続先の名前も出す
   const several = S.settings.connections.length > 1 && activeConn();
   $('#connTag').hidden = !several;
   $('#connTag').textContent = several ? (activeConn().name || '').slice(0, 5) : '';
-  $('#charChip span').textContent = chatChars(S.chat).length;
+  $('#heroChip span').textContent = heroOf(S.chat)?.name || '主人公なし';
   $('#btnImages').classList.toggle('off', !S.settings.showImages);
   $('#btnSend').textContent = S.busy ? '停止' : '送信';
 
@@ -472,22 +509,6 @@ async function setBg(file) {
   } catch (e) {
     alert(`この画像は読み込めませんでした。\n${e.message}`);
   }
-}
-
-function openNote() {
-  $('#sheetTitle').textContent = '今回の話';
-  const ta = h('textarea', { class: 'big', value: S.chat.note || '', placeholder: 'このチャットだけの設定を書きます。\n例: 今回は文化祭の前日の話。ひよりと高坂がけんかするところから始める。' });
-  $('#sheetBody').replaceChildren(
-    h('p', { class: 'hint', text: 'プロンプト・キャラ表に加えて、このチャットのときだけAIに渡されます。画面には出ません。' }),
-    ta,
-    h('div', { class: 'btnrow' }, h('button', { class: 'primary', text: '保存', onclick: async () => {
-      S.chat.note = ta.value;
-      if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
-      closePanels();
-      toast('保存しました');
-    } })),
-  );
-  show('#sheet');
 }
 
 // 枝分かれの全体図。一本道の区間を1行にまとめ、分岐するたびに一段下げて表示する。
@@ -640,13 +661,15 @@ function openChatMenu() {
       if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
       closePanels();
     }),
-    item('book', `今回の話${S.chat.note?.trim() ? '（設定あり）' : ''}`, openNote),
+    h('p', { class: 'grouphead', text: '見る・のぞく' }),
     item('phone', 'スマホをのぞく', phone.openPeekSheet),
     item('gauge', '使用量（トークン・キャッシュ）', openUsage),
     item('branch', '分岐ツリー', openTree),
+    h('p', { class: 'grouphead', text: '整理' }),
     item('summary', `あらすじ（要約）${S.chat.summary ? (S.chat.summaryOn === false ? '（オフ）' : '（あり）') : ''}`, openSummary),
     item('fold', 'すべてたたむ', () => foldAll(true)),
     item('unfold', 'すべてひらく', () => foldAll(false)),
+    h('p', { class: 'grouphead', text: '書き出し' }),
     item('copy', '全文をコピー（今見えている枝）', () => copy(story)),
     item('copy', 'AIの文章だけコピー', () => copy(story.filter((m) => m.role === 'assistant'))),
     item('save', 'テキストファイルで保存（全文）', () => saveText(story)),
@@ -876,7 +899,7 @@ async function removeMessage(m) {
 }
 
 // ---------- パネル ----------
-const PANELS = ['#drawer', '#sheet', '#settings', '#phone'];
+const PANELS = ['#drawer', '#sheet', '#settings', '#phone', '#setup'];
 
 function show(sel) {
   PANELS.forEach((p) => ($(p).hidden = p !== sel));
@@ -943,7 +966,7 @@ function openDrawer(keepSearch) {
 
 async function exportChat(c) {
   const messages = await db.messagesOf(c.id);
-  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats: [c], messages, chars: await packChars(chatChars(c)) };
+  const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats: [c], messages, chars: await packChars([...chatChars(normalizeChat(c)), heroOf(c)?.card].filter(Boolean)) };
   await saveFile(new File([JSON.stringify(data)], `${(c.title || 'チャット').replace(/[\\/:*?"<>|\n]/g, '_')}.json`, { type: 'application/json' }));
 }
 
@@ -981,25 +1004,6 @@ async function removeChat(c) {
   openDrawer();
 }
 
-function openPromptSheet() {
-  $('#sheetTitle').textContent = 'プロンプトを選ぶ';
-  const pick = async (id) => {
-    S.chat.promptId = id;
-    S.settings.lastPromptId = id;
-    await saveSettings();
-    if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
-    closePanels();
-  };
-  const row = (id, name) => h('div', { class: `row ${S.chat.promptId === id ? 'on' : ''}` },
-    h('button', { class: 'plain', text: name, onclick: () => pick(id) }));
-  $('#sheetBody').replaceChildren(
-    row(null, 'なし'),
-    ...S.prompts.map((p) => row(p.id, p.name || '（名前なし）')),
-    h('div', { class: 'btnrow' }, h('button', { text: 'プロンプトを追加・編集する', onclick: () => openSettings('prompts') })),
-  );
-  show('#sheet');
-}
-
 function modelEditor(c, onPick, again) {
   const input = h('input', { type: 'text', placeholder: 'モデル名を入力して追加', autocapitalize: 'off', autocorrect: 'off' });
   const choose = (name) => {
@@ -1027,37 +1031,77 @@ function modelEditor(c, onPick, again) {
     h('div', { class: 'addrow' }, input, h('button', { text: '追加', onclick: add })));
 }
 
-function openCharSheet() {
-  $('#sheetTitle').textContent = 'このチャットで使うもの';
-  const ids = (S.chat.charIds ||= []);
-  const toggle = async (c) => {
+// 右から出る「この話の設定」。このチャットだけの選択（主人公・登場人物・資料・今回の話・プロンプト）をまとめる。
+function openSetup() {
+  flushSaves();
+  const chat = S.chat;
+  const body = $('#setupBody');
+  const keep = $('#setup').hidden ? 0 : body.scrollTop;
+  const saveChatOnly = () => (S.chats.includes(chat) ? db.put('chats', chat) : null);
+  const again = async () => { await saveSettings(); await saveChatOnly(); render(); openSetup(); };
+  const row = (on, kind, label, onclick) => h('div', { class: `row pick ${on ? 'on' : ''}` },
+    h('button', { class: 'plain withic', onclick }, icon(`${kind}${on ? 'On' : 'Off'}`), label));
+  const none = (text) => h('p', { class: 'hint', text });
+
+  // 主人公（1人）
+  const heroes = S.chars.filter((c) => c.type === 'hero');
+  const setHero = (id) => { chat.heroId = id; if (id !== 'custom') S.settings.lastHeroId = id; again(); };
+  const custom = (chat.heroCustom ||= { name: '', text: '' });
+  const heroPart = [
+    h('h3', { class: 'grouphead', text: '主人公' }),
+    row(!chat.heroId, 'radio', 'なし', () => setHero(null)),
+    ...heroes.map((c) => row(chat.heroId === c.id, 'radio', c.name || '（名前なし）', () => setHero(c.id))),
+    row(chat.heroId === 'custom', 'radio', 'この話だけの主人公を書く', () => setHero('custom')),
+    chat.heroId === 'custom' && h('div', { class: 'card inset' },
+      field('名前', bound(custom, 'name', () => { saveChatOnly(); render(); }, { type: 'text', placeholder: '例: タイトロープ' })),
+      field('設定', bound(custom, 'text', saveChatOnly, { placeholder: '年齢、容姿、立場、相手との関係など。このチャットのときだけ使います。' }, 'textarea')),
+      h('div', { class: 'btnrow' }, h('button', { text: 'この主人公をカードとして保存', onclick: async () => {
+        if (!custom.name?.trim() && !custom.text?.trim()) { alert('先に名前か設定を書いてください。'); return; }
+        const card = { id: uid(), type: 'hero', name: custom.name.trim() || '主人公', core: custom.text, detail: '', keywords: '', greeting: '', createdAt: Date.now() };
+        S.chars.push(card);
+        await db.put('chars', card);
+        chat.heroId = card.id;
+        S.settings.lastHeroId = card.id;
+        toast('主人公カードに保存しました');
+        again();
+      } }))),
+  ];
+
+  // 登場人物・世界設定・資料（いくつでも）
+  const ids = (chat.charIds ||= []);
+  const toggle = (c) => {
     const i = ids.indexOf(c.id);
-    if (i >= 0) ids.splice(i, 1);
-    else {
-      if (c.type === 'hero') for (const o of S.chars) if (o.type === 'hero' && ids.includes(o.id)) ids.splice(ids.indexOf(o.id), 1);
-      ids.push(c.id);
-    }
+    if (i >= 0) ids.splice(i, 1); else ids.push(c.id);
     S.settings.lastCharIds = [...ids];
-    await saveSettings();
-    if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
     applyBg();
-    openCharSheet();
+    again();
   };
-  const group = (type, title) => {
+  const group = (type, title, empty) => {
     const list = S.chars.filter((c) => (c.type || 'char') === type);
-    return [h('p', { class: 'grouphead', text: title }),
-      ...list.map((c) => h('div', { class: `row ${ids.includes(c.id) ? 'on' : ''}` },
-        h('button', { class: 'plain', text: `${ids.includes(c.id) ? '✔' : '　'} ${c.name || '（名前なし）'}`, onclick: () => toggle(c) }))),
-      !list.length && h('p', { class: 'hint', text: 'まだありません。' })];
+    return [h('h3', { class: 'grouphead', text: title }),
+      ...list.map((c) => row(ids.includes(c.id), 'box', c.name || '（名前なし）', () => toggle(c))),
+      !list.length && none(empty)];
   };
-  $('#sheetBody').replaceChildren(...[
-    ...group('hero', '主人公（1人だけ選べます）'),
-    ...group('char', '登場人物（何人でも）'),
-    ...group('world', '世界設定（いくつでも）'),
-    ...group('doc', '資料（いくつでも）'),
-    h('div', { class: 'btnrow' }, h('button', { text: '追加・編集する', onclick: () => openSettings('chars') })),
+
+  // プロンプト（1つ）
+  const setPrompt = (id) => { chat.promptId = id; S.settings.lastPromptId = id; again(); };
+
+  body.replaceChildren(...[
+    ...heroPart,
+    ...group('char', '相手役・登場人物', 'まだありません。下の「作る・編集する」から追加できます。'),
+    ...group('world', '世界設定', 'まだありません。'),
+    ...group('doc', '資料', 'まだありません。'),
+    h('h3', { class: 'grouphead', text: '今回の話' }),
+    field('', bound(chat, 'note', saveChatOnly, { placeholder: 'このチャットだけの設定や、話の始まり。\n例: 文化祭の前日。二人がけんかするところから始める。' }, 'textarea')),
+    h('h3', { class: 'grouphead', text: 'プロンプト' }),
+    row(!chat.promptId, 'radio', 'なし', () => setPrompt(null)),
+    ...S.prompts.map((p) => row(chat.promptId === p.id, 'radio', p.name || '（名前なし）', () => setPrompt(p.id))),
+    h('div', { class: 'btnrow', style: 'margin-top:18px' },
+      h('button', { text: 'カードを作る・編集する', onclick: () => openSettings('chars') }),
+      h('button', { text: 'プロンプトを編集する', onclick: () => openSettings('prompts') })),
   ].filter(Boolean));
-  show('#sheet');
+  show('#setup');
+  body.scrollTop = keep;
 }
 
 function openModelSheet() {
@@ -1357,7 +1401,7 @@ function renderSettings() {
     );
   } else if (S.tab === 'prompts') {
     body.replaceChildren(
-      h('p', { class: 'hint', text: '執筆用・ロールプレイ用などを保存しておき、チャット画面上部のプロンプト名をタップして切り替えます。' }),
+      h('p', { class: 'hint', text: '執筆用・ロールプレイ用などを保存しておき、チャット画面右上の「この話の設定」で切り替えます。' }),
       ...S.prompts.map(promptCard),
       h('button', { class: 'wide', text: '＋ プロンプトを追加', onclick: async () => {
         const p = { id: uid(), name: '新しいプロンプト', text: '', createdAt: Date.now() };
@@ -1399,8 +1443,8 @@ function renderSettings() {
       } }),
     ];
     body.replaceChildren(
-      h('p', { class: 'hint', text: 'ここで作ったカードを、チャット画面上部の人のマークから、そのチャットで使うものだけ選びます。' }),
-      ...section('hero', '主人公', '自分が演じる・語る人物。話によって変えたいときは複数作って、チャットごとに1人選びます。', '主人公'),
+      h('p', { class: 'hint', text: 'ここはカードの保管庫です。チャットで使うものは、チャット画面右上の「この話の設定」で選びます。' }),
+      ...section('hero', '主人公', '自分が演じる・語る人物。何度も使う主人公をここに保存しておきます。一度きりの主人公なら、カードを作らずに「この話の設定」で直接書けます。', '主人公'),
       ...section('char', '登場人物', '相手役や脇役。人数が多くても、詳細は名前が出た人の分だけ読み込まれます。', '登場人物'),
       ...section('world', '世界設定', '舞台や用語。キーワードが出たときだけ詳細を読み込みます（他のアプリの「ロアブック」と同じ働きです）。', '世界設定'),
       ...section('doc', '資料', '設定をまとめたテキストを、分けずにまるごと読み込ませたいとき用です。Geminiのノートブックや、Claudeのプロジェクトに入れるテキストと同じ使い方ができます。', '資料'),
@@ -1525,6 +1569,11 @@ async function loadAll() {
   const uiDefaults = S.settings.ui;
   Object.assign(S.settings, settings);
   S.settings.ui = { ...uiDefaults, ...settings?.ui };
+  if (S.settings.lastHeroId === undefined) {
+    const isHero = (id) => chars.find((c) => c.id === id)?.type === 'hero';
+    S.settings.lastHeroId = (S.settings.lastCharIds || []).find(isHero) ?? null;
+    S.settings.lastCharIds = (S.settings.lastCharIds || []).filter((id) => !isHero(id));
+  }
   if (!Array.isArray(S.settings.inserts)) S.settings.inserts = DEFAULT_INSERTS.map((i) => ({ id: uid(), ...i }));
   S.settings.summary = { connId: '', model: '', auto: false, threshold: 40, keep: 10, ...settings?.summary };
   applyUi();
@@ -1577,9 +1626,9 @@ $('#btnDrawer').addEventListener('click', openDrawer);
 $('#chatSearch').addEventListener('input', (e) => searchChats(e.target.value));
 $('#btnNewChat').addEventListener('click', async () => { await openChat(blankChat()); closePanels(); });
 $('#btnSettings').addEventListener('click', () => openSettings());
-$('#promptChip').addEventListener('click', openPromptSheet);
+$('#btnSetup').addEventListener('click', openSetup);
+$('#heroChip').addEventListener('click', openSetup);
 $('#modelChip').addEventListener('click', openModelSheet);
-$('#charChip').addEventListener('click', openCharSheet);
 $('#btnImages').addEventListener('click', () => {
   S.settings.showImages = !S.settings.showImages;
   saveSettings();
@@ -1625,5 +1674,5 @@ if (window.visualViewport) {
 
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
-const phone = initPhone({ $, h, icon, ICONS, S, db, streamChat, uid, pathTo, chatChars, buildSystem, summaryCut, apiMessage, activeConn, modelLabel, show, closePanels, toast, stamp });
+const phone = initPhone({ $, h, icon, ICONS, S, db, streamChat, uid, pathTo, chatChars, heroOf, buildSystem, summaryCut, apiMessage, activeConn, modelLabel, show, closePanels, toast, stamp });
 loadAll().catch(showFatal);

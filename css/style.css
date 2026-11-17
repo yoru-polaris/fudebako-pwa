@@ -332,3 +332,15 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .sidetag { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
 .sidetag .ic { width: 13px; height: 13px; margin-right: 4px; }
 #input { max-height: calc(var(--vh, 100dvh) * 0.38); }
+
+/* ---- 右から出る「この話の設定」 ---- */
+#setup { position: fixed; z-index: 20; right: 0; top: var(--vt, 0px); height: var(--vh, 100dvh); width: min(88vw, 380px);
+  background: var(--bg); display: flex; flex-direction: column; padding: env(safe-area-inset-top) 10px env(safe-area-inset-bottom);
+  box-shadow: -4px 0 16px rgba(0,0,0,.18); }
+#setupBody { flex: 1; overflow-y: auto; padding: 0 4px 30px; }
+#setup .grouphead:first-child { margin-top: 4px; }
+.row.pick .plain { padding: 11px 4px; }
+.row.pick .ic { color: var(--sub); }
+.row.pick.on .ic { color: var(--accent); }
+.card.inset { margin: 6px 0 4px; }
+#heroChip { flex: 1 1 0; } #modelChip { flex: 1.3 1 0; }

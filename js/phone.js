@@ -105,7 +105,7 @@ export function initPhone(x) {
     const chat = S.chat;
     const path = x.pathTo(chat.leafId);
     if (!path.length) { alert('まだ会話がありません。少し話を進めてから試してください。'); return; }
-    const hero = x.chatChars(chat).find((c) => c.type === 'hero')?.name || 'ユーザー';
+    const hero = x.heroOf(chat)?.name || 'ユーザー';
     const cut = x.summaryCut(chat, path);
     const { system } = x.buildSystem(chat, `${path.slice(-4).map((m) => m.text).join('\n')}\n${name || ''}`, cut ? chat.summary.text : '');
     const talk = path.slice(cut).filter((m) => !m.side).map((m) => `【${m.role === 'user' ? hero : '語り・相手役'}】\n${x.apiMessage(m).text}`).join('\n\n');
