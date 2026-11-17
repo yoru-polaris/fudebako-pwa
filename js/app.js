@@ -62,7 +62,7 @@ const S = {
   settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null, lastCharIds: [],
     summary: { connId: '', model: '', auto: false, threshold: 40, keep: 10 },
     ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false,
-      kbGap: 'auto', replaceUser: true, toolsMode: 'always', toolColors: true, toolStyle: '', compact: true, showMeta: true, font: 'gothic', lineHeight: '1.75', paper: false, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
+      kbGap: 'auto', replaceUser: true, toolsMode: 'always', toolColors: true, toolStyle: '', compactTools: false, showMeta: true, font: 'gothic', lineHeight: '1.75', paper: false, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
   prompts: [],
   chars: [],
   chats: [],
@@ -401,7 +401,7 @@ function messageEl(m, index) {
   if (iconUrl(face)) bubble.append(h('div', { class: 'who' }, avatar(face, 'av sm'), face.name));
   if (m.side) bubble.append(h('div', { class: 'sidetag' }, icon('spark'), `番外：${m.sideName || '差し込み'}`));
   const more = S.moreFor === m.id;
-  const showInfo = ui.showMeta && (!ui.compact || more);
+  const showInfo = ui.showMeta && (!ui.compactTools || more);
   if (showInfo) bubble.append(h('div', { class: 'meta', text: [`#${index + 1}`, m.model, new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' / ') }));
   if (m.collapsed) {
     bubble.append(h('div', { class: 'body', text: expandImages(m.text).replace(IMG_URL, '〔画像〕').trim().slice(0, 200) }));
@@ -433,7 +433,7 @@ function messageEl(m, index) {
     if (m.role === 'assistant' && m.id === S.chat.leafId) tools.append(h('button', { class: 'c-go', text: '続き', onclick: () => continueFrom(m) }));
     if (m.side) tools.append(h('button', { class: 'c-retry', text: 'やり直す', onclick: () => runInsert({ name: m.sideName, text: m.sideText || '', mode: 'side' }, m.parentId) }));
     else if (m.role === 'assistant') tools.append(h('button', { class: 'c-retry', text: '再生成', onclick: () => generate(m.parentId) }));
-    if (!ui.compact || more) {
+    if (!ui.compactTools || more) {
       tools.append(
         h('button', { class: 'c-edit', text: '編集', onclick: () => { S.editing = m.id; S.moreFor = null; render(); } }),
         h('button', { class: 'c-copy', text: 'コピー', onclick: () => navigator.clipboard.writeText(m.text).then(() => toast('コピーしました')) }),
@@ -442,7 +442,7 @@ function messageEl(m, index) {
       );
     }
     // よく使うボタン以外は「…」の中にしまう
-    if (ui.compact) tools.append(h('button', { class: 'c-more', text: more ? '閉じる' : '…', 'aria-label': more ? '閉じる' : 'ほかの操作', onclick: () => { S.moreFor = more ? null : m.id; render(); } }));
+    if (ui.compactTools) tools.append(h('button', { class: 'c-more', text: more ? '閉じる' : '…', 'aria-label': more ? '閉じる' : 'ほかの操作', onclick: () => { S.moreFor = more ? null : m.id; render(); } }));
     el.append(tools);
   }
   return el;
@@ -905,6 +905,7 @@ async function send() {
   S.chat.leafId = m.id;
   if (!S.chat.title) S.chat.title = (text || m.files[0].name).replace(/\s+/g, ' ').slice(0, 24);
   input.value = '';
+  $('#composer').classList.remove('tall');   // 大きくした入力欄は、送ったら元に戻す
   resizeInput();
   saveDraft();
   await Promise.all([db.put('messages', m), saveChat()]);
@@ -1174,6 +1175,29 @@ function openSetup() {
   ].filter(Boolean));
   show('#setup');
   body.scrollTop = keep;
+}
+
+// 上部の主人公ボタン：主人公だけをすぐ切り替える（全部の設定は右上の「この話の設定」）
+function openHeroSheet() {
+  $('#sheetTitle').textContent = '主人公を選ぶ';
+  const chat = S.chat;
+  const pick = async (id) => {
+    chat.heroId = id;
+    if (id !== 'custom') S.settings.lastHeroId = id;
+    await saveSettings();
+    if (S.chats.includes(chat)) await db.put('chats', chat);
+    if (id === 'custom') { openSetup(); return; }
+    closePanels();
+  };
+  const row = (on, label, id, card) => h('div', { class: `row pick ${on ? 'on' : ''}` },
+    h('button', { class: 'plain withic', onclick: () => pick(id) }, icon(on ? 'radioOn' : 'radioOff'), card && avatar(card, 'av sm'), label));
+  $('#sheetBody').replaceChildren(
+    row(!chat.heroId, 'なし', null),
+    ...S.chars.filter((c) => c.type === 'hero').map((c) => row(chat.heroId === c.id, c.name || '（名前なし）', c.id, c)),
+    row(chat.heroId === 'custom', chat.heroId === 'custom' && heroOf(chat) ? `この話だけの主人公（${heroOf(chat).name}）` : 'この話だけの主人公を書く', 'custom'),
+    h('div', { class: 'btnrow' }, h('button', { text: 'この話の設定をすべて開く', onclick: openSetup })),
+  );
+  show('#sheet');
 }
 
 function openModelSheet() {
@@ -1614,7 +1638,7 @@ function renderSettings() {
       h('div', { class: 'card' },
         h('strong', { text: 'メッセージのボタン' }),
         field('ボタンの出し方', select(ui, 'toolsMode', { always: 'いつも表示する', tap: '吹き出しをタップしたときだけ表示する' }, save), '「タップしたときだけ」でも、最後のメッセージにはいつも表示されます。'),
-        check('compact', 'よく使うボタンだけ出し、ほかは「…」にまとめる', '編集・コピー・削除・文字数・番号や使用量は「…」を押すと出ます。'),
+        check('compactTools', 'よく使うボタンだけ出し、ほかは「…」にまとめる', '編集・コピー・削除・文字数・番号や使用量は「…」を押すと出ます。'),
         field('ボタンの色', select(ui, 'toolStyle', [['theme', '配色に合わせる'], ['color', '色分けする（緑・橙・赤など）'], ['plain', '色を付けない']], save)),
         check('showMeta', '番号・モデル名・時刻・使用量を表示する')),
     );
@@ -1723,6 +1747,12 @@ $('#messages').addEventListener('scroll', () => {
   jumpTimer = setTimeout(() => document.querySelectorAll('.jump').forEach((b) => b.classList.remove('show')), 2500);
 }, { passive: true });
 $('#btnInsert').addEventListener('click', openInsertSheet);
+$('#btnExpand').addEventListener('click', () => {
+  const tall = $('#composer').classList.toggle('tall');
+  $('#btnExpand').setAttribute('aria-label', tall ? '入力欄を小さくする' : '入力欄を大きくする');
+  resizeInput();
+  $('#input').focus();
+});
 $('#btnAttach').addEventListener('click', () => {
   const el = h('input', { type: 'file', accept: 'image/*,.txt,.md,text/plain,text/markdown', multiple: true, onchange: () => addFiles(el.files) });
   el.click();
@@ -1734,7 +1764,7 @@ $('#chatPerson').addEventListener('change', (e) => { chatPerson = e.target.value
 $('#btnNewChat').addEventListener('click', async () => { await openChat(blankChat()); closePanels(); });
 $('#btnSettings').addEventListener('click', () => openSettings());
 $('#btnSetup').addEventListener('click', openSetup);
-$('#heroChip').addEventListener('click', openSetup);
+$('#heroChip').addEventListener('click', openHeroSheet);
 $('#modelChip').addEventListener('click', openModelSheet);
 $('#btnImages').addEventListener('click', () => {
   S.settings.showImages = !S.settings.showImages;
