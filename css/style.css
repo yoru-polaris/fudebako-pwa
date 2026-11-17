@@ -396,3 +396,21 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .comprow svg { width: 21px; height: 21px; }
 #composer.tall #btnExpand { color: var(--accent); }
 #composer #btnSend { min-width: 72px; min-height: 38px; border-radius: 999px; }
+
+/* ---- 入力欄：書いていないときは1行 ---- */
+#composer.idle .inputbox { display: flex; align-items: center; gap: 2px; padding: 3px 4px; }
+#composer.idle .comprow { display: contents; }
+#composer.idle #btnExpand, #composer.idle .comprow .grow { display: none; }
+#composer.idle #btnAttach { order: -2; } #composer.idle #btnInsert { order: -1; }
+#composer.idle #input { order: 0; flex: 1; min-width: 0; min-height: 0; max-height: 3.2em; overflow: hidden; padding: 6px 4px; }
+#composer.idle #btnSend { order: 1; min-height: 36px; }
+
+/* ---- 読むモード ---- */
+#btnRead svg { width: 22px; height: 22px; }
+body.reading #topbar, body.reading #composer, body.reading #pending { display: none !important; }
+body.reading .msg .tools, body.reading .meta, body.reading .cnt { display: none !important; }
+body.reading #messages { padding-top: calc(16px + env(safe-area-inset-top)); }
+#btnReadExit { position: fixed; z-index: 6; top: calc(var(--vt, 0px) + 8px + env(safe-area-inset-top)); right: 10px; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; padding: 5px 12px 5px 8px; border-radius: 999px; border: 0; color: var(--head-text); background: color-mix(in srgb, var(--head) 82%, transparent);
+  box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+#btnReadExit svg { width: 15px; height: 15px; }

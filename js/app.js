@@ -1766,6 +1766,43 @@ $('#btnSettings').addEventListener('click', () => openSettings());
 $('#btnSetup').addEventListener('click', openSetup);
 $('#heroChip').addEventListener('click', openHeroSheet);
 $('#modelChip').addEventListener('click', openModelSheet);
+// ---------- 読むモード ----------
+// 上部・入力欄・操作ボタンを隠して本文だけにする。出入りしても、読んでいる位置を保つ。
+function keepReadingPosition(change) {
+  const box = $('#messages');
+  const top = box.getBoundingClientRect().top;
+  const anchor = [...box.querySelectorAll('.msg')].find((el) => el.getBoundingClientRect().bottom > top + 4);
+  const offset = anchor ? anchor.getBoundingClientRect().top - top : 0;
+  change();
+  if (anchor) box.scrollTop += anchor.getBoundingClientRect().top - box.getBoundingClientRect().top - offset;
+  updateBar();
+}
+function setReading(on) {
+  keepReadingPosition(() => {
+    document.body.classList.toggle('reading', on);
+    $('#btnReadExit').hidden = !on;
+    if (on) document.activeElement?.blur?.();
+  });
+}
+$('#btnRead').addEventListener('click', () => setReading(true));
+$('#btnReadExit').addEventListener('click', () => setReading(false));
+
+// ---------- 入力欄：書いていないときは1行に縮める ----------
+const composer = $('#composer');
+let idleTimer = 0;
+let pressing = false;
+function updateIdle() {
+  const active = composer.contains(document.activeElement) || composer.classList.contains('tall') || pressing;
+  if (composer.classList.contains('idle') === !active) return;
+  keepReadingPosition(() => composer.classList.toggle('idle', !active));
+}
+composer.addEventListener('focusin', () => { clearTimeout(idleTimer); updateIdle(); });
+composer.addEventListener('focusout', () => { clearTimeout(idleTimer); idleTimer = setTimeout(updateIdle, 250); });
+// ボタンを押している途中で縮むと押し損ねるので、押している間は縮めない
+composer.addEventListener('pointerdown', () => { pressing = true; });
+document.addEventListener('pointerup', () => { if (pressing) setTimeout(() => { pressing = false; updateIdle(); }, 350); });
+composer.classList.add('idle');
+
 $('#btnImages').addEventListener('click', () => {
   S.settings.showImages = !S.settings.showImages;
   saveSettings();
