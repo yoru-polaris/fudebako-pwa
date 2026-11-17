@@ -26,7 +26,7 @@
       <button id="btnSettings" class="iconbtn" aria-label="設定"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     </div>
     <div id="chips">
-      <button id="heroChip" class="chip" aria-label="この話の設定（主人公）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span>主人公なし</span></button>
+      <button id="heroChip" class="chip" aria-label="この話の設定（主人公）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><img class="av chipimg" alt="" hidden><span>主人公なし</span></button>
       <button id="modelChip" class="chip" aria-label="モデルを選ぶ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg><b id="connTag" hidden></b><span>モデル未選択</span></button>
     </div>
   </header>
@@ -52,9 +52,15 @@
     <strong>チャット一覧</strong>
     <button class="iconbtn" data-close aria-label="閉じる">✕</button>
   </div>
-  <button id="btnNewChat" class="primary wide">＋ 新しいチャット</button>
+  <div class="newrow">
+    <button id="btnNewChat" class="primary">＋ 新しいチャット</button>
+    <button id="btnStartWith">人物から始める</button>
+  </div>
   <div class="btnrow" id="drawerTools"></div>
-  <input id="chatSearch" type="text" placeholder="タイトル・本文を検索" style="margin-top:8px">
+  <div class="searchrow">
+    <input id="chatSearch" type="text" placeholder="タイトル・本文を検索">
+    <select id="chatPerson" aria-label="人物で絞り込む"></select>
+  </div>
   <div id="chatList"></div>
 </aside>
 

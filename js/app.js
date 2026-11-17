@@ -35,6 +35,8 @@ const ICONS = {
   image: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8.5 11a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 16l-5-5-9 9',
   clip: 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
   gauge: 'M12 21a9 9 0 1 1 9-9M12 12l5-3M3 12h2M12 3v2',
+  pin: 'M9 4h6l-1 6 3 3v2H7v-2l3-3zM12 15v6',
+  play: 'M7 4l13 8-13 8z',
   sliders: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
   radioOn: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
   radioOff: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z',
@@ -165,9 +167,9 @@ function buildSystem(chat, recentText, summaryText) {
   const block = (c) => {
     let text = `## ${c.name}\n${c.core || ''}`.trim();
     const keys = [c.name, ...(c.keywords || '').split(/[,、，\n]+/)].map((k) => k.trim()).filter(Boolean);
-    if (c.detail?.trim() && keys.some((k) => recentText.includes(k))) {
+    if (c.detail?.trim() && (c.alwaysDetail || keys.some((k) => recentText.includes(k)))) {
       text += `\n${c.detail.trim()}`;
-      loaded.push(c.name);
+      if (!c.alwaysDetail) loaded.push(c.name);
     }
     return text;
   };
@@ -249,10 +251,28 @@ async function saveChat() {
   await Promise.all([db.put('chats', S.chat), saveSettings()]);
 }
 
+// 書きかけの入力を、チャットごとにこの端末へ残す（送信前にアプリを閉じても消えないように）
+const draftKey = (id) => `sousaku:draft:${id}`;
+function saveDraft() {
+  if (!S.chat) return;
+  try {
+    const v = $('#input').value;
+    if (v.trim()) localStorage.setItem(draftKey(S.chat.id), v); else localStorage.removeItem(draftKey(S.chat.id));
+  } catch { /* 保存できない環境では何もしない */ }
+}
+function loadDraft() {
+  let v = '';
+  try { v = localStorage.getItem(draftKey(S.chat.id)) || ''; } catch { /* 読めなければ空 */ }
+  $('#input').value = v;
+  resizeInput();
+}
+let draftTimer = 0;
+
 // 長い会話でも重くならないよう、画面に出すのは直近 PAGE 件だけにする（上のボタンで追加表示）
 const PAGE = 60;
 
 async function openChat(chat) {
+  if (S.chat) saveDraft();
   S.abort?.abort();
   S.chat = normalizeChat(chat);
   S.error = '';
@@ -261,6 +281,7 @@ async function openChat(chat) {
   S.msgs = new MsgMap((await db.messagesOf(chat.id)).map((m) => [m.id, m]));
   kidsIndex = null;
   if (S.chats.includes(chat)) { S.settings.lastChatId = chat.id; saveSettings(); }
+  loadDraft();
   render();
   scrollBottom();
   applyBg();
@@ -373,6 +394,8 @@ function messageEl(m, index) {
     render();
   };
   const bubble = h('div', { class: `bubble ${m.collapsed ? 'folded' : ''} ${m.side ? 'side' : ''}`, onclick: m.collapsed ? (S.busy ? null : fold) : tapTools });
+  const face = !m.side && S.faces?.[m.role];
+  if (iconUrl(face)) bubble.append(h('div', { class: 'who' }, avatar(face, 'av sm'), face.name));
   if (m.side) bubble.append(h('div', { class: 'sidetag' }, icon('spark'), `番外：${m.sideName || '差し込み'}`));
   if (ui.showMeta) bubble.append(h('div', { class: 'meta', text: [`#${index + 1}`, m.model, new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' / ') }));
   if (m.collapsed) {
@@ -422,7 +445,14 @@ function render() {
   const several = S.settings.connections.length > 1 && activeConn();
   $('#connTag').hidden = !several;
   $('#connTag').textContent = several ? (activeConn().name || '').slice(0, 5) : '';
-  $('#heroChip span').textContent = heroOf(S.chat)?.name || '主人公なし';
+  const heroNow = heroOf(S.chat);
+  $('#heroChip span').textContent = heroNow?.name || '主人公なし';
+  $('#heroChip img').hidden = !iconUrl(heroNow?.card);
+  $('#heroChip svg').style.display = iconUrl(heroNow?.card) ? 'none' : '';
+  if (iconUrl(heroNow?.card)) $('#heroChip img').src = iconUrl(heroNow.card);
+  // 吹き出しに出す顔：相手役が1人だけならその人、自分側は主人公
+  const cast = chatChars(S.chat).filter((c) => (c.type || 'char') === 'char');
+  S.faces = { assistant: cast.length === 1 ? cast[0] : null, user: heroNow?.card || null };
   $('#btnImages').classList.toggle('off', !S.settings.showImages);
   $('#btnSend').textContent = S.busy ? '停止' : '送信';
 
@@ -493,9 +523,9 @@ async function applyBg() {
   return !!global;
 }
 
-async function shrinkImage(file) {
+async function shrinkImage(file, max = 1600) {
   const bmp = await createImageBitmap(file);
-  const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
   const cv = h('canvas', { width: Math.round(bmp.width * scale), height: Math.round(bmp.height * scale) });
   cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
   return new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
@@ -678,6 +708,29 @@ function openChatMenu() {
   show('#sheet');
 }
 
+// 登場人物のカードから、新しいチャットを1回で始める（主人公とプロンプトは今のチャットから引き継ぐ）
+async function startFromCard(c) {
+  const chat = blankChat();
+  chat.charIds = [c.id, ...chat.charIds.filter((id) => S.chars.find((x) => x.id === id)?.type !== 'char')];
+  await openChat(chat);
+  closePanels();
+  if (c.greeting?.trim()) await startWith(c);
+  else { S.chat.title = c.name; await saveChat(); render(); }
+}
+
+function openStartSheet() {
+  $('#sheetTitle').textContent = '人物を選んで始める';
+  const cast = S.chars.filter((c) => (c.type || 'char') === 'char');
+  const hero = heroOf(S.chat);
+  $('#sheetBody').replaceChildren(...[
+    h('p', { class: 'hint', text: `選んだ人物で新しいチャットを始めます。始まり方が書いてあれば、そこから始まります。主人公（${hero?.name || 'なし'}）とプロンプトは今のチャットと同じです。` }),
+    ...cast.map((c) => h('div', { class: 'row' }, h('button', { class: 'plain withic', onclick: () => startFromCard(c) },
+      avatar(c, 'av') || icon('user'), h('span', { text: c.name || '（名前なし）' }), c.greeting?.trim() && h('small', { class: 'tag', text: '始まり方あり' })))),
+    !cast.length && h('p', { class: 'hint', text: 'まだ登場人物のカードがありません。歯車 →「キャラ」で作れます。' }),
+  ].filter(Boolean));
+  show('#sheet');
+}
+
 async function startWith(c) {
   const m = { id: uid(), chatId: S.chat.id, parentId: null, role: 'assistant', text: fillNames(S.chat, c.greeting.trim()), createdAt: Date.now() };
   S.msgs.set(m.id, m);
@@ -843,6 +896,7 @@ async function send() {
   if (!S.chat.title) S.chat.title = (text || m.files[0].name).replace(/\s+/g, ' ').slice(0, 24);
   input.value = '';
   resizeInput();
+  saveDraft();
   await Promise.all([db.put('messages', m), saveChat()]);
   generate(m.id);
 }
@@ -921,6 +975,7 @@ function pickFile(accept, fn) {
 }
 
 let chatQuery = '';
+let chatPerson = '';
 let bodyIndex = null;
 
 async function searchChats(q) {
@@ -933,21 +988,28 @@ async function searchChats(q) {
 }
 
 function openDrawer(keepSearch) {
-  if (keepSearch !== true) { chatQuery = ''; bodyIndex = null; $('#chatSearch').value = ''; }
-  const hit = (c) => !chatQuery || (c.title || '').includes(chatQuery) || (bodyIndex?.get(c.id) || '').includes(chatQuery);
+  if (keepSearch !== true) { chatQuery = ''; chatPerson = ''; bodyIndex = null; $('#chatSearch').value = ''; }
+  const hit = (c) => (!chatQuery || (c.title || '').includes(chatQuery) || (bodyIndex?.get(c.id) || '').includes(chatQuery))
+    && (!chatPerson || (c.charIds || []).includes(chatPerson) || c.heroId === chatPerson);
+  const people = (c) => { normalizeChat(c); return [heroOf(c)?.name, chatChars(c).filter((x) => (x.type || 'char') === 'char').map((x) => x.name).join('・')].filter(Boolean).join(' × '); };
+  const used = S.chars.filter((x) => x.type === 'hero' || (x.type || 'char') === 'char');
+  $('#chatPerson').replaceChildren(h('option', { value: '', text: 'すべての人物' }), ...used.map((x) => h('option', { value: x.id, text: x.name || '（名前なし）' })));
+  $('#chatPerson').value = used.some((x) => x.id === chatPerson) ? chatPerson : '';
   $('#drawerTools').replaceChildren(
     h('button', { text: '全出力', onclick: exportData }),
     h('button', { text: '取込', onclick: () => pickFile('.json,application/json', (f) => importData(f).then(openDrawer)) }),
     h('button', { text: 'テキスト取込', onclick: () => pickFile('.txt,text/plain', importText) }),
   );
   $('#chatList').replaceChildren(...S.chats
-    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updatedAt - a.updatedAt)
     .filter(hit)
     .map((c) => h('div', { class: `chatrow ${c === S.chat ? 'on' : ''}` },
       h('button', { class: 'plain', onclick: async () => { await openChat(c); closePanels(); } },
-        h('div', { class: 't', text: c.title || '（無題）' }),
+        h('div', { class: 't' }, c.pinned && icon('pin'), c.title || '（無題）'),
+        people(c) && h('div', { class: 'p', text: people(c) }),
         h('div', { class: 'd', text: `作成 ${stamp(c.createdAt)}　更新 ${stamp(c.updatedAt)}` })),
       h('div', { class: 'acts' },
+        h('button', { class: c.pinned ? 'pinned' : '', 'aria-label': c.pinned ? 'ピン留めを外す' : 'ピン留め', onclick: async () => { c.pinned = !c.pinned; await db.put('chats', c); openDrawer(true); } }, icon('pin')),
         h('button', { 'aria-label': '名前を変える', onclick: async () => {
           const name = prompt('チャットの名前', c.title);
           if (name == null) return;
@@ -960,7 +1022,7 @@ function openDrawer(keepSearch) {
         h('button', { text: '複製', onclick: () => duplicateChat(c) }),
         h('button', { class: 'danger', text: '削除', onclick: () => removeChat(c) })),
     )));
-  if (!$('#chatList').children.length) $('#chatList').append(h('p', { class: 'hint', text: chatQuery ? '見つかりませんでした。' : 'まだチャットはありません。' }));
+  if (!$('#chatList').children.length) $('#chatList').append(h('p', { class: 'hint', text: chatQuery || chatPerson ? '見つかりませんでした。' : 'まだチャットはありません。' }));
   show('#drawer');
 }
 
@@ -1039,8 +1101,8 @@ function openSetup() {
   const keep = $('#setup').hidden ? 0 : body.scrollTop;
   const saveChatOnly = () => (S.chats.includes(chat) ? db.put('chats', chat) : null);
   const again = async () => { await saveSettings(); await saveChatOnly(); render(); openSetup(); };
-  const row = (on, kind, label, onclick) => h('div', { class: `row pick ${on ? 'on' : ''}` },
-    h('button', { class: 'plain withic', onclick }, icon(`${kind}${on ? 'On' : 'Off'}`), label));
+  const row = (on, kind, label, onclick, card) => h('div', { class: `row pick ${on ? 'on' : ''}` },
+    h('button', { class: 'plain withic', onclick }, icon(`${kind}${on ? 'On' : 'Off'}`), card && avatar(card, 'av sm'), label));
   const none = (text) => h('p', { class: 'hint', text });
 
   // 主人公（1人）
@@ -1050,7 +1112,7 @@ function openSetup() {
   const heroPart = [
     h('h3', { class: 'grouphead', text: '主人公' }),
     row(!chat.heroId, 'radio', 'なし', () => setHero(null)),
-    ...heroes.map((c) => row(chat.heroId === c.id, 'radio', c.name || '（名前なし）', () => setHero(c.id))),
+    ...heroes.map((c) => row(chat.heroId === c.id, 'radio', c.name || '（名前なし）', () => setHero(c.id), c)),
     row(chat.heroId === 'custom', 'radio', 'この話だけの主人公を書く', () => setHero('custom')),
     chat.heroId === 'custom' && h('div', { class: 'card inset' },
       field('名前', bound(custom, 'name', () => { saveChatOnly(); render(); }, { type: 'text', placeholder: '例: タイトロープ' })),
@@ -1079,7 +1141,7 @@ function openSetup() {
   const group = (type, title, empty) => {
     const list = S.chars.filter((c) => (c.type || 'char') === type);
     return [h('h3', { class: 'grouphead', text: title }),
-      ...list.map((c) => row(ids.includes(c.id), 'box', c.name || '（名前なし）', () => toggle(c))),
+      ...list.map((c) => row(ids.includes(c.id), 'box', c.name || '（名前なし）', () => toggle(c), c)),
       !list.length && none(empty)];
   };
 
@@ -1290,15 +1352,25 @@ function charCard(c) {
     if (!bgPick.files[0]) return;
     try { c.bg = await shrinkImage(bgPick.files[0]); await save(); applyBg(); renderSettings(); } catch (e) { alert(`この画像は読み込めませんでした。\n${e.message}`); }
   } });
+  const iconPick = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async () => {
+    if (!iconPick.files[0]) return;
+    try { c.icon = await shrinkImage(iconPick.files[0], 256); await save(); renderSettings(); render(); } catch (e) { alert(`この画像は読み込めませんでした。\n${e.message}`); }
+  } });
   const card = h('details', { class: 'card', open: S.openCard === c.id },
-    h('summary', { text: c.name || '（名前なし）' }),
-    field('名前', bound(c, 'name', () => { save(); card.querySelector('summary').textContent = c.name || '（名前なし）'; }, { type: 'text' })),
+    h('summary', { class: 'cardsum' }, avatar(c, 'av sm'), c.name || '（名前なし）'),
+    (type === 'char' || type === 'hero') && h('div', { class: 'iconrow' },
+      avatar(c, 'av lg') || h('span', { class: 'av lg blank' }, icon('user')),
+      h('button', { text: c.icon ? 'アイコンを変える' : 'アイコン画像を選ぶ', onclick: () => iconPick.click() }),
+      c.icon && h('button', { class: 'danger', text: '外す', onclick: async () => { delete c.icon; await save(); renderSettings(); render(); } }),
+      iconPick),
+    field('名前', bound(c, 'name', () => { save(); card.querySelector('summary').lastChild.textContent = c.name || '（名前なし）'; }, { type: 'text' })),
     field('種類', select(c, 'type', CHAR_TYPES, () => { save(); renderSettings(); })),
     simple
       ? field(type === 'doc' ? '本文' : '設定', bound(c, 'core', save, { class: 'big', placeholder: type === 'doc' ? '設定資料やこれまでの本文などを、そのまま貼り付けます。' : '年齢、容姿、性格、立場など。話によって主人公を変えたいときは、カードを複数作って切り替えます。' }, 'textarea'), `これを選んだチャットで、毎回まるごとAIに渡されます。${type === 'doc' ? `（今 ${(c.core || '').length.toLocaleString()} 文字）` : ''}`)
       : field(type === 'world' ? '基本（いつも読み込む）' : '核（いつも読み込む）', bound(c, 'core', save, { class: 'big', placeholder: type === 'world' ? '世界のあらまし、時代、決まりごとなど。短くまとめます。' : '性格、口調、一人称、外見など。他のアプリ用に書いた設定文を、そのまままるごと貼り付けても大丈夫です。' }, 'textarea'), 'このチャットで使うと決めたら、毎回AIに渡されます。'),
     !simple && field(type === 'world' ? '詳細（キーワードが出たときだけ読み込む）' : '詳細（名前が出たときだけ読み込む）', bound(c, 'detail', save, { class: 'big', placeholder: type === 'world' ? '地名、組織、用語、歴史など。長くても大丈夫です。' : '過去、人間関係、細かい設定、台詞の例など。長くても大丈夫です。' }, 'textarea'), '直近4つのメッセージに、名前か下のキーワードが出てきたときだけAIに渡されます。'),
     !simple && field('キーワード（「、」で区切る）', bound(c, 'keywords', save, { type: 'text', placeholder: type === 'world' ? '例: 王都、騎士団、魔法学院' : '例: ひよ、日和、先輩' })),
+    !simple && h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!c.alwaysDetail, onchange: (e) => { c.alwaysDetail = e.target.checked; save(); } }), '詳細もいつも読み込む（名前やキーワードが出なくても）'),
     type === 'char' && field('始まり方（最初のメッセージ）', bound(c, 'greeting', save, { class: 'big', placeholder: '新しいチャットでこの人物を選ぶと、「この始まり方で始める」ボタンが出ます。空欄なら出ません。' }, 'textarea')),
     type === 'char' && h('div', { class: 'f' }, '背景画像（この人物を使うチャットの背景）',
       h('div', { class: 'btnrow' },
@@ -1306,6 +1378,7 @@ function charCard(c) {
         c.bg && h('button', { class: 'danger', text: 'やめる', onclick: async () => { delete c.bg; await save(); applyBg(); renderSettings(); } }),
         bgPick)),
     h('div', { class: 'btnrow' },
+      type === 'char' && h('button', { class: 'primary', onclick: () => startFromCard(c) }, icon('play'), 'この人物で新しく始める'),
       type === 'char' && h('button', { onclick: (e) => tidyCard(c, e.currentTarget) }, icon('spark'), 'AIに整理してもらう'),
       h('button', { class: 'danger', text: '削除', onclick: async () => {
       if (!confirm(`「${c.name}」を削除しますか？`)) return;
@@ -1318,9 +1391,26 @@ function charCard(c) {
   return card;
 }
 
+// 人物アイコン（Blob）を表示用のURLにする。同じ画像は使い回す。
+const iconUrls = new WeakMap();
+function iconUrl(c) {
+  if (!(c?.icon instanceof Blob)) return '';
+  if (!iconUrls.has(c.icon)) iconUrls.set(c.icon, URL.createObjectURL(c.icon));
+  return iconUrls.get(c.icon);
+}
+const avatar = (c, cls = 'av') => (iconUrl(c) ? h('img', { class: cls, src: iconUrl(c), alt: '' }) : null);
+
 const toDataUrl = (blob) => new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
-const packChars = (list) => Promise.all(list.map(async (c) => (c.bg instanceof Blob ? { ...c, bg: await toDataUrl(c.bg) } : c)));
-const unpackChars = (list) => Promise.all(list.map(async (c) => (typeof c.bg === 'string' ? { ...c, bg: await (await fetch(c.bg)).blob() } : c)));
+const packChars = (list) => Promise.all(list.map(async (c) => {
+  const out = { ...c };
+  for (const k of ['bg', 'icon']) if (c[k] instanceof Blob) out[k] = await toDataUrl(c[k]);
+  return out;
+}));
+const unpackChars = (list) => Promise.all(list.map(async (c) => {
+  const out = { ...c };
+  for (const k of ['bg', 'icon']) if (typeof c[k] === 'string') out[k] = await (await fetch(c[k])).blob();
+  return out;
+}));
 
 async function refreshApp() {
   try {
@@ -1595,7 +1685,7 @@ async function loadAll() {
 }
 
 $('#btnSend').addEventListener('click', send);
-$('#input').addEventListener('input', resizeInput);
+$('#input').addEventListener('input', () => { resizeInput(); clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft, 400); });
 $('#input').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
   if (e.metaKey || e.ctrlKey || (S.settings.ui.enterSend && !e.shiftKey)) { e.preventDefault(); send(); }
@@ -1624,6 +1714,8 @@ $('#btnAttach').addEventListener('click', () => {
 });
 $('#btnDrawer').addEventListener('click', openDrawer);
 $('#chatSearch').addEventListener('input', (e) => searchChats(e.target.value));
+$('#btnStartWith').addEventListener('click', openStartSheet);
+$('#chatPerson').addEventListener('change', (e) => { chatPerson = e.target.value; openDrawer(true); });
 $('#btnNewChat').addEventListener('click', async () => { await openChat(blankChat()); closePanels(); });
 $('#btnSettings').addEventListener('click', () => openSettings());
 $('#btnSetup').addEventListener('click', openSetup);
@@ -1640,7 +1732,8 @@ $('#backdrop').addEventListener('click', closePanels);
 document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', closePanels));
 document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => { S.tab = b.dataset.tab; S.openCard = null; renderSettings(); }));
 
-document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { flushSaves(); saveDraft(); } });
+window.addEventListener('pagehide', saveDraft);
 // iPhoneではキーボードが出ても画面の高さが変わらず、入力欄が宙に浮いたり隠れたりする。
 // 実際に見えている範囲（visualViewport）に合わせて、画面全体の位置と高さを合わせ直す。
 // 新しいiOSでは、キーボードの上に浮かぶ操作バー（∧ ∨ ✓）の分が「見えている範囲」に含まれて

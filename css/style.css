@@ -344,3 +344,22 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .row.pick.on .ic { color: var(--accent); }
 .card.inset { margin: 6px 0 4px; }
 #heroChip { flex: 1 1 0; } #modelChip { flex: 1.3 1 0; }
+
+/* ---- アイコン画像・人物から始める・一覧 ---- */
+.av { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex: none; background: var(--line); }
+.av.sm { width: 24px; height: 24px; margin-right: 8px; }
+.av.lg { width: 64px; height: 64px; display: inline-flex; align-items: center; justify-content: center; color: var(--sub); }
+.av.lg .ic { width: 30px; height: 30px; margin: 0; }
+.withic .av { margin-right: 10px; }
+.chip .chipimg { width: 18px; height: 18px; margin: 0; }
+.cardsum { display: flex !important; align-items: center; }
+.iconrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.who { display: flex; align-items: center; font-size: 13px; font-weight: 700; color: var(--sub); margin-bottom: 4px; }
+.msg.user .who { justify-content: flex-end; }
+.withic .tag { margin-left: auto; font-size: 11px; color: var(--accent); border: 1px solid currentColor; border-radius: 999px; padding: 0 8px; }
+.newrow { display: flex; gap: 8px; } .newrow #btnNewChat { flex: 1; } .newrow #btnStartWith { flex: none; font-size: 14px; }
+.searchrow { display: flex; gap: 6px; margin-top: 8px; } .searchrow input { flex: 1; min-width: 0; } .searchrow select { width: 38%; flex: none; }
+.chatrow .t { display: flex; align-items: center; gap: 4px; } .chatrow .t .ic { width: 14px; height: 14px; margin: 0; color: var(--accent); }
+.chatrow .p { font-size: 13px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chatrow .acts .pinned { color: var(--accent); border-color: var(--accent); }
+.chatrow .acts .ic { margin: 0; }
