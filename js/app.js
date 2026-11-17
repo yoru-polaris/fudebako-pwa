@@ -554,7 +554,8 @@ async function summarize(manual) {
   const path = pathTo(chat.leafId);
   const keep = Math.max(2, Number(S.settings.summary.keep) || 10);
   const done = chat.summary ? path.findIndex((m) => m.id === chat.summary.uptoId) + 1 : 0;
-  const end = path.length - keep;
+  let end = path.length - keep;
+  while (end > done && path[end - 1].side) end--;
   if (end - done < 2) {
     if (manual) alert(`まだ要約するほど長くありません。\n直近 ${keep} 件はそのまま残し、それより前を要約します。`);
     return;
@@ -629,6 +630,7 @@ function openChatMenu() {
     closePanels();
     await db.putMany('messages', path);
   };
+  const story = path.filter((m) => !m.side);   // 番外は本文に含めない
   const copy = (list) => navigator.clipboard.writeText(list.map((m) => m.text).join('\n\n')).then(() => { toast('コピーしました'); closePanels(); });
   $('#sheetBody').replaceChildren(
     item('pencil', '名前を変える', async () => {
@@ -645,10 +647,10 @@ function openChatMenu() {
     item('summary', `あらすじ（要約）${S.chat.summary ? (S.chat.summaryOn === false ? '（オフ）' : '（あり）') : ''}`, openSummary),
     item('fold', 'すべてたたむ', () => foldAll(true)),
     item('unfold', 'すべてひらく', () => foldAll(false)),
-    item('copy', '全文をコピー（今見えている枝）', () => copy(path)),
-    item('copy', 'AIの文章だけコピー', () => copy(path.filter((m) => m.role === 'assistant'))),
-    item('save', 'テキストファイルで保存（全文）', () => saveText(path)),
-    item('save', 'テキストファイルで保存（AIの文章だけ）', () => saveText(path.filter((m) => m.role === 'assistant'))),
+    item('copy', '全文をコピー（今見えている枝）', () => copy(story)),
+    item('copy', 'AIの文章だけコピー', () => copy(story.filter((m) => m.role === 'assistant'))),
+    item('save', 'テキストファイルで保存（全文）', () => saveText(story)),
+    item('save', 'テキストファイルで保存（AIの文章だけ）', () => saveText(story.filter((m) => m.role === 'assistant'))),
   );
   show('#sheet');
 }
@@ -730,7 +732,7 @@ async function generate(parentId, opts = {}) {
   const conn = activeConn();
   const fullPath = pathTo(parentId);
   let cut = summaryCut(S.chat, [...fullPath, {}]);
-  if (cut >= fullPath.length) cut = 0;
+  if (cut >= fullPath.length || !fullPath.slice(cut).some((x) => !x.side)) cut = 0;
   const history = fullPath.slice(cut).filter((x) => !x.side).map(apiMessage);
   const { system, loaded } = buildSystem(S.chat, history.slice(-4).map((x) => x.text).join('\n'), cut ? S.chat.summary.text : '');
   if (opts.extraUser) history.push({ role: 'user', text: opts.extraUser });
@@ -1095,7 +1097,7 @@ const pendingSaves = new Set();
 const flushSaves = () => [...pendingSaves].forEach((f) => f());
 
 function select(obj, key, options, save, after) {
-  const el = h('select', {}, Object.entries(options).map(([value, text]) => h('option', { value, text })));
+  const el = h('select', {}, (Array.isArray(options) ? options : Object.entries(options)).map(([value, text]) => h('option', { value, text })));
   el.value = obj[key];
   el.addEventListener('change', () => { obj[key] = el.value; save(); after?.(); });
   return el;
@@ -1455,7 +1457,7 @@ function renderSettings() {
       h('div', { class: 'card' },
         h('strong', { text: '操作' }),
         check('replaceUser', '設定文の「User」を主人公の名前に置き換える', '主人公を選んでいるチャットで、キャラ設定や始まり方に書かれた「User」「{{user}}」を主人公の名前に変えてからAIに渡します。'),
-        field('キーボードが出ているときの、入力欄の下の余白', select(ui, 'kbGap', { auto: '自動', 0: 'なし', 40: '小', 72: '中', 100: '大', 130: '特大' }, save), '入力欄の下や送信ボタンがキーボードに隠れるときは大きく、入力欄とキーボードの間が空きすぎるときは小さくしてください。'),
+        field('キーボードが出ているときの、入力欄の下の余白', select(ui, 'kbGap', [['auto', '自動'], ['0', 'なし'], ['40', '小'], ['72', '中'], ['100', '大'], ['130', '特大']], save), '入力欄の下や送信ボタンがキーボードに隠れるときは大きく、入力欄とキーボードの間が空きすぎるときは小さくしてください。'),
         check('scrollbar', '右端にスクロールバーを表示する', '指でつまんで動かすと、長い会話をすばやく移動できます。'),
         field('「続き」ボタンでAIに送る指示', bound(ui, 'continueText', save, { type: 'text' }), '最後の返事の下の「続き」を押すと、この文章をこっそり送って続きを書かせます。画面には残りません。'),
         check('autoScroll', '返事が届いている間、自動で下へスクロールする'),

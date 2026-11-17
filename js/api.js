@@ -151,7 +151,14 @@ async function* openai(conn, { system, messages, signal, json }) {
   if (conn.thinkMode === 'budget' && num(conn.thinkBudget) !== undefined) body.reasoning = { max_tokens: num(conn.thinkBudget) };
   if (conn.thinkMode === 'level' && conn.thinkLevel) body.reasoning = { effort: conn.thinkLevel };
 
-  const resp = await post(`${base}/chat/completions`, { Authorization: `Bearer ${conn.apiKey.trim()}` }, body, signal);
+  const call = () => post(`${base}/chat/completions`, { Authorization: `Bearer ${conn.apiKey.trim()}` }, body, signal);
+  let resp;
+  try { resp = await call(); } catch (e) {
+    // 使用量の報告指定（stream_options）を受け付けない互換サーバー向けに、外してもう一度
+    if (e.name === 'AbortError' || !/stream_options|include_usage/i.test(e.message)) throw e;
+    delete body.stream_options;
+    resp = await call();
+  }
   for await (const chunk of sse(resp)) {
     if (chunk.error) throw new Error(`エラー\n${chunk.error.message || JSON.stringify(chunk.error)}`);
     const u = chunk.usage;

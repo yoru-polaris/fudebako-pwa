@@ -96,7 +96,8 @@ export function initPhone(x) {
   let cur = null;   // 開いているスマホ { peek, app, index }
   let job = null;   // 生成中 { name, started, chars, abort }
 
-  const list = (v) => (Array.isArray(v) ? v : []);
+  const list = (v) => (Array.isArray(v) ? v.filter((item) => item && typeof item === 'object') : []);
+  const onPeekSheet = () => !$('#sheet').hidden && $('#sheetTitle').textContent === 'スマホをのぞく';
   const str = (v) => (v == null ? '' : String(v));
 
   // ---------- 生成 ----------
@@ -113,7 +114,7 @@ export function initPhone(x) {
     const conn = { ...x.activeConn(), tailUser: '', tailModel: '' };
 
     job = { name: name || '相手', started: Date.now(), chars: 0, abort: new AbortController() };
-    const tick = setInterval(() => { if (!$('#sheet').hidden) openPeekSheet(); }, 1000);
+    const tick = setInterval(() => { if (onPeekSheet()) openPeekSheet(); }, 1000);   // 別の画面を開いているときは上書きしない
     openPeekSheet();
     const run = async (json) => {
       let out = '';
@@ -136,12 +137,15 @@ export function initPhone(x) {
       await db.put('chats', chat);
       clearInterval(tick);
       job = null;
-      if (S.chat === chat) openPhone(peek);
+      const waiting = onPeekSheet();
+      job = null;
+      if (S.chat === chat && waiting) openPhone(peek);
+      else x.toast('スマホの中身ができました（チャット名 →「スマホをのぞく」から開けます）');
     } catch (e) {
       clearInterval(tick);
       job = null;
       if (e.name !== 'AbortError') alert(`スマホの中身を作れませんでした。\n${e instanceof SyntaxError ? 'AIの返事が決まった形になっていませんでした。もう一度試すか、別のモデルで試してください。' : e.message}`);
-      if (!$('#sheet').hidden) openPeekSheet();
+      if (onPeekSheet()) openPeekSheet();
     }
   }
 
