@@ -378,16 +378,6 @@ function messageEl(m, index) {
   const el = h('div', { class: `msg ${m.role}` });
   el.dataset.id = m.id;
 
-  if (S.editing === m.id) {
-    const ta = h('textarea', { value: m.text });
-    const isUser = m.role === 'user';
-    el.append(ta, h('div', { class: 'editbtns' },
-      h('button', { class: 'primary', text: isUser ? '送り直す（枝を作る）' : '別の枝として保存', onclick: () => saveEdit(m, ta.value, true) }),
-      h('button', { text: '上書きだけ', onclick: () => saveEdit(m, ta.value, false) }),
-      h('button', { text: 'やめる', onclick: () => { S.editing = null; render(); } }),
-    ));
-    return el;
-  }
 
   const fold = async () => { m.collapsed = !m.collapsed; render(); await db.put('messages', m); };
   const ui = S.settings.ui;
@@ -435,7 +425,7 @@ function messageEl(m, index) {
     else if (m.role === 'assistant') tools.append(h('button', { class: 'c-retry', text: '再生成', onclick: () => generate(m.parentId) }));
     if (!ui.compactTools || more) {
       tools.append(
-        h('button', { class: 'c-edit', text: '編集', onclick: () => { S.editing = m.id; S.moreFor = null; render(); } }),
+        h('button', { class: 'c-edit', text: '編集', onclick: () => editMessage(m) }),
         h('button', { class: 'c-copy', text: 'コピー', onclick: () => navigator.clipboard.writeText(m.text).then(() => toast('コピーしました')) }),
         h('button', { class: 'c-del', text: '削除', onclick: () => removeMessage(m) }),
         h('span', { class: 'cnt', text: `${m.text.length.toLocaleString()} / ${S.totalChars.toLocaleString()}字` }),
@@ -651,7 +641,7 @@ function openSummary() {
   const done = chat.summary ? path.findIndex((m) => m.id === chat.summary.uptoId) + 1 : 0;
   const saveChatOnly = () => (S.chats.includes(chat) ? db.put('chats', chat) : null);
   const ta = h('textarea', { class: 'big', value: chat.summary?.text || '', placeholder: 'まだ要約はありません。' });
-  ta.addEventListener('input', () => { if (chat.summary) { chat.summary.text = ta.value; saveChatOnly(); } });
+  tapToEdit(ta, (v) => { if (chat.summary) { chat.summary.text = v; saveChatOnly(); } });
   const models = { '': '本文と同じモデルを使う' };
   for (const c of S.settings.connections) for (const name of c.type === 'dummy' ? ['ダミーAI'] : c.models) models[`${c.id}|${name}`] = `${c.name} / ${name}`;
   const pick = h('select', {}, Object.entries(models).map(([value, text]) => h('option', { value, text })));
@@ -919,6 +909,17 @@ async function switchBranch(target) {
   await saveChat();
 }
 
+function editMessage(m) {
+  S.moreFor = null;
+  const isUser = m.role === 'user';
+  openEditor({
+    title: isUser ? '自分の発言を編集' : m.side ? '番外を編集' : '返事を編集',
+    value: m.text,
+    done: { label: isUser ? '送り直す' : '別の枝で保存', fn: (v) => saveEdit(m, v, true) },
+    extra: [{ label: '上書きだけ（枝を作らない）', fn: (v) => saveEdit(m, v, false) }],
+  });
+}
+
 async function saveEdit(m, text, asBranch) {
   S.editing = null;
   if (!text.trim()) { render(); return; }
@@ -1165,7 +1166,7 @@ function openSetup() {
     ...group('world', '世界設定', 'まだありません。'),
     ...group('doc', '資料', 'まだありません。'),
     h('h3', { class: 'grouphead', text: '今回の話' }),
-    field('', bound(chat, 'note', saveChatOnly, { placeholder: 'このチャットだけの設定や、話の始まり。\n例: 文化祭の前日。二人がけんかするところから始める。' }, 'textarea')),
+    field('', bound(chat, 'note', saveChatOnly, { 'data-title': '今回の話', placeholder: 'このチャットだけの設定や、話の始まり。\n例: 文化祭の前日。二人がけんかするところから始める。' }, 'textarea')),
     h('h3', { class: 'grouphead', text: 'プロンプト' }),
     row(!chat.promptId, 'radio', 'なし', () => setPrompt(null)),
     ...S.prompts.map((p) => row(chat.promptId === p.id, 'radio', p.name || '（名前なし）', () => setPrompt(p.id))),
@@ -1230,6 +1231,62 @@ function bound(obj, key, save, props = {}, tag = 'input') {
     timer = setTimeout(flush, 700);
   });
   el.addEventListener('change', () => { obj[key] = el.value; flush(); });
+  if (tag === 'textarea') tapToEdit(el, (v) => { obj[key] = v; flush(); });
+  return el;
+}
+
+// ---------- 長い文章の編集画面 ----------
+// キーボードが出ると、設定画面の中では文章欄が細い帯しか見えなくなる。
+// 長い文章は、見えている範囲いっぱいに広がる専用の画面で編集する。
+// 打っている間も少し待って保存し、キャンセルなら元に戻す。
+let editorState = null;
+function openEditor({ title, value, onInput, done, extra = [] }) {
+  const ta = $('#edText');
+  editorState = { original: value, onInput, done, timer: 0 };
+  $('#edTitle').textContent = title || 'テキストを編集';
+  $('#edDone').textContent = done?.label || '完了';
+  $('#edFoot').replaceChildren(...extra.map((x) => h('button', { text: x.label, onclick: () => { const v = ta.value; closeEditor(); x.fn(v); } })));
+  $('#edFoot').hidden = !extra.length;
+  ta.value = value || '';
+  $('#editor').hidden = false;
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.scrollTop = ta.scrollHeight;
+}
+function closeEditor() {
+  clearTimeout(editorState?.timer);
+  $('#editor').hidden = true;
+  $('#edText').blur();
+  editorState = null;
+}
+$('#edText').addEventListener('input', () => {
+  const st = editorState;
+  if (!st?.onInput) return;
+  clearTimeout(st.timer);
+  st.timer = setTimeout(() => st.onInput($('#edText').value), 500);
+});
+$('#edDone').addEventListener('click', () => {
+  const st = editorState;
+  const v = $('#edText').value;
+  closeEditor();
+  if (st?.onInput) st.onInput(v);
+  st?.done?.fn?.(v);
+});
+$('#edCancel').addEventListener('click', () => {
+  const st = editorState;
+  if (st && $('#edText').value !== (st.original || '') && !confirm('編集した内容を取り消して、元に戻しますか？')) return;
+  closeEditor();
+  if (st?.onInput) st.onInput(st.original || '');
+});
+
+// 文章欄をタップしたら編集画面を開く（欄そのものは読むだけにする）
+function tapToEdit(el, apply) {
+  el.readOnly = true;
+  el.classList.add('tapedit');
+  el.addEventListener('click', () => {
+    const title = el.dataset.title || el.closest('.f')?.firstChild?.textContent?.trim() || el.closest('#sheet') && $('#sheetTitle').textContent || 'テキストを編集';
+    openEditor({ title, value: el.value, onInput: (v) => { el.value = v; apply(v); } });
+  });
   return el;
 }
 
@@ -1831,7 +1888,7 @@ function fitViewport() {
   fullHeight = Math.max(fullHeight, vv.height);
   const keyboard = fullHeight - vv.height > 120;
   const pref = S.settings.ui.kbGap;
-  const gap = !keyboard ? 0 : pref === 'auto' || pref == null ? (floatingBar ? 72 : 0) : Number(pref) || 0;
+  const gap = !keyboard || pref === 'auto' || pref == null ? 0 : Number(pref) || 0;
   const box = $('#messages');
   const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   const root = document.documentElement.style;

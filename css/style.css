@@ -414,3 +414,15 @@ body.reading #messages { padding-top: calc(16px + env(safe-area-inset-top)); }
   font-size: 12px; padding: 5px 12px 5px 8px; border-radius: 999px; border: 0; color: var(--head-text); background: color-mix(in srgb, var(--head) 82%, transparent);
   box-shadow: 0 1px 6px rgba(0,0,0,.25); }
 #btnReadExit svg { width: 15px; height: 15px; }
+
+/* ---- 長い文章の編集画面 ---- */
+#editor { position: fixed; z-index: 35; left: 0; right: 0; top: var(--vt, 0px); height: var(--vh, 100dvh); background: var(--bg);
+  display: flex; flex-direction: column; padding: env(safe-area-inset-top) 0 0; }
+.edhead { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; }
+.edhead strong { flex: 1; min-width: 0; text-align: center; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.edhead button { border: 0; background: none; padding: 6px 8px; font-size: 15px; }
+.edhead #edDone { background: var(--accent); color: var(--accent-text); border-radius: 999px; padding: 5px 14px; font-weight: 700; }
+#edText { flex: 1; width: 100%; border: 0; border-radius: 0; resize: none; padding: 12px 14px; font-size: 16px; line-height: 1.7; background: var(--field); outline: none; }
+#edFoot { display: flex; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); background: var(--panel); flex: none; }
+#edFoot button { flex: 1; font-size: 14px; }
+textarea.tapedit { cursor: pointer; }
