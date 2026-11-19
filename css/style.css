@@ -426,3 +426,21 @@ body.reading #messages { padding-top: calc(16px + env(safe-area-inset-top)); }
 #edFoot { display: flex; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); background: var(--panel); flex: none; }
 #edFoot button { flex: 1; font-size: 14px; }
 textarea.tapedit { cursor: pointer; }
+
+/* ---- ゴミ箱・バックアップ・検索 ---- */
+#drawerTools .trashbtn { flex: none; width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+#drawerTools .trashbtn .ic { margin: 0; }
+.trashrow { border-bottom: 1px solid var(--line); padding: 8px 2px; }
+.trashrow .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trashrow .d { font-size: 12px; color: var(--sub); }
+.trashrow .acts { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
+.trashrow .acts button { font-size: 13px; padding: 3px 12px; }
+#backupBar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 12px; font-size: 13px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel)); border-bottom: 1px solid var(--line); }
+#backupBar span { flex: 1 1 200px; }
+#backupBar button { font-size: 13px; padding: 4px 12px; }
+.findrow .plain { padding: 8px 4px; white-space: normal; }
+.findrow .d { font-size: 12px; color: var(--sub); }
+.findrow .snip { font-size: 14px; line-height: 1.6; }
+.findrow mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; border-radius: 3px; padding: 0 2px; }
+.msg.found .bubble { outline: 3px solid var(--accent); outline-offset: 2px; transition: outline-color 1.5s; }

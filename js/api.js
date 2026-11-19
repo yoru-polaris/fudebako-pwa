@@ -52,7 +52,10 @@ async function fail(resp) {
     detail = j?.error?.message || detail;
   } catch { /* JSONでなければそのまま */ }
   const hint = HINTS[resp.status] || (resp.status >= 500 ? 'サーバー側のエラーです。少し待ってやり直してください。' : '');
-  throw new Error(`エラー ${resp.status}\n${hint}\n\n（サーバーからの返事）\n${detail}`.trim());
+  const err = new Error(`エラー ${resp.status}\n${hint}\n\n（サーバーからの返事）\n${detail}`.trim());
+  err.status = resp.status;
+  err.retryable = resp.status === 429 || resp.status >= 500;
+  throw err;
 }
 
 async function post(url, headers, body, signal) {
@@ -66,7 +69,9 @@ async function post(url, headers, body, signal) {
     });
   } catch (e) {
     if (e.name === 'AbortError') throw e;
-    throw new Error(`通信できませんでした。電波の状態やURLを確認してください。\n（${e.message}）`);
+    const err = new Error(`通信できませんでした。電波の状態やURLを確認してください。\n（${e.message}）`);
+    err.retryable = true;
+    throw err;
   }
   if (!resp.ok) await fail(resp);
   return resp;

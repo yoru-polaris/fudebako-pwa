@@ -36,6 +36,7 @@ const ICONS = {
   clip: 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
   gauge: 'M12 21a9 9 0 1 1 9-9M12 12l5-3M3 12h2M12 3v2',
   pin: 'M9 4h6l-1 6 3 3v2H7v-2l3-3zM12 15v6',
+  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3',
   play: 'M7 4l13 8-13 8z',
   sliders: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
   radioOn: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
@@ -62,7 +63,7 @@ const S = {
   settings: { connections: [], activeConnId: null, showImages: true, lastPromptId: null, lastChatId: null, lastCharIds: [],
     summary: { connId: '', model: '', auto: false, threshold: 40, keep: 10 },
     ui: { theme: 'auto', fontSize: '16', enterSend: false, autoScroll: true, showTimer: true, skipDeleteConfirm: false,
-      kbGap: 'auto', replaceUser: true, toolsMode: 'always', toolColors: true, toolStyle: '', compactTools: false, showMeta: true, font: 'gothic', lineHeight: '1.75', paper: false, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
+      kbGap: 'auto', retries: '2', replaceUser: true, toolsMode: 'always', toolColors: true, toolStyle: '', compactTools: false, showMeta: true, font: 'gothic', lineHeight: '1.75', paper: false, scrollbar: true, continueText: '続きを書いてください。', imgBase: '', imgExt: '.avif', bgVeil: 70, bubbleAlpha: 85 } },
   prompts: [],
   chars: [],
   chats: [],
@@ -281,7 +282,9 @@ async function openChat(chat) {
   S.error = '';
   S.editing = null;
   S.showCount = PAGE;
-  S.msgs = new MsgMap((await db.messagesOf(chat.id)).map((m) => [m.id, m]));
+  const stored = await db.messagesOf(chat.id);
+  S.fileStore = new Map(stored.filter((x) => x.files).map((x) => [x.id, x.files]));   // 枝どうしで共有する添付
+  S.msgs = new MsgMap(stored.filter((x) => !x.deletedAt).map((x) => [x.id, x]));
   kidsIndex = null;
   if (S.chats.includes(chat)) { S.settings.lastChatId = chat.id; saveSettings(); }
   loadDraft();
@@ -398,7 +401,7 @@ function messageEl(m, index) {
   } else {
     if (m.thought) bubble.append(h('details', { class: 'thought' }, h('summary', { text: '思考' }), h('div', { text: m.thought })));
     bubble.append(h('div', { class: 'body' }, richText(m.text)));
-    if (m.files?.length) bubble.append(h('div', { class: 'files' }, m.files.map((f) => f.kind === 'image'
+    if (filesOf(m).length) bubble.append(h('div', { class: 'files' }, filesOf(m).map((f) => f.kind === 'image'
       ? h('img', { src: `data:${f.mime};base64,${f.data}`, alt: f.name })
       : h('span', { class: 'filechip' }, icon('clip'), f.name))));
     if (m.notice) bubble.append(h('div', { class: 'hint', text: `※ ${m.notice}` }));
@@ -691,6 +694,7 @@ function openChatMenu() {
       if (S.chats.includes(S.chat)) await db.put('chats', S.chat);
       closePanels();
     }),
+    item('search', 'このチャットを検索', () => openFind(S.lastFind || '')),
     h('p', { class: 'grouphead', text: '見る・のぞく' }),
     item('phone', 'スマホをのぞく', phone.openPeekSheet),
     item('gauge', '使用量（トークン・キャッシュ）', openUsage),
@@ -718,6 +722,49 @@ async function startFromCard(c) {
   else { S.chat.title = c.name; await saveChat(); render(); }
 }
 
+// このチャットの中を検索する。今見ている枝を先に、ほかの枝は後に並べる。
+function openFind(query = '') {
+  $('#sheetTitle').textContent = 'このチャットを検索';
+  const input = h('input', { type: 'text', value: query, placeholder: '探す言葉', enterkeyhint: 'search' });
+  const list = h('div', {});
+  const onPath = new Set(pathTo(S.chat.leafId).map((m) => m.id));
+  const run = () => {
+    const q = input.value.trim();
+    if (!q) { list.replaceChildren(h('p', { class: 'hint', text: '言葉を入れると、このチャットの全部の枝から探します。' })); return; }
+    const hits = [...S.msgs.values()].filter((m) => m.text.includes(q))
+      .sort((a, b) => (onPath.has(b.id) - onPath.has(a.id)) || a.createdAt - b.createdAt);
+    list.replaceChildren(
+      h('p', { class: 'hint', text: hits.length ? `${hits.length} 件見つかりました${hits.length > 100 ? '（最初の100件を表示）' : ''}` : '見つかりませんでした。' }),
+      ...hits.slice(0, 100).map((m) => {
+        const i = m.text.indexOf(q);
+        const before = m.text.slice(Math.max(0, i - 24), i).replace(/\s+/g, ' ');
+        const after = m.text.slice(i + q.length, i + q.length + 40).replace(/\s+/g, ' ');
+        return h('div', { class: 'row findrow' }, h('button', { class: 'plain', onclick: () => jumpTo(m, q) },
+          h('div', { class: 'd', text: `${m.role === 'user' ? '自分' : m.side ? '番外' : 'AI'}・${stamp(m.createdAt)}${onPath.has(m.id) ? '' : '・別の枝'}` }),
+          h('div', { class: 'snip' }, `${i > 24 ? '…' : ''}${before}`, h('mark', { text: q }), `${after}…`)));
+      }));
+  };
+  input.addEventListener('input', run);
+  $('#sheetBody').replaceChildren(input, list);
+  run();
+  show('#sheet');
+  input.focus();
+}
+
+async function jumpTo(m, q) {
+  if (!pathTo(S.chat.leafId).includes(m)) { S.chat.leafId = deepest(m.id); await saveChat(); }
+  const path = pathTo(S.chat.leafId);
+  S.showCount = Math.max(S.showCount || PAGE, path.length - path.indexOf(m) + 2);
+  if (m.collapsed) { m.collapsed = false; db.put('messages', m); }
+  closePanels();
+  const el = $(`#messages [data-id="${m.id}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: 'center' });
+  el.classList.add('found');
+  setTimeout(() => el.classList.remove('found'), 2200);
+  S.lastFind = q;
+}
+
 function openStartSheet() {
   $('#sheetTitle').textContent = '人物を選んで始める';
   const cast = S.chars.filter((c) => (c.type || 'char') === 'char');
@@ -743,11 +790,11 @@ async function startWith(c) {
 // ---------- 会話の操作 ----------
 // 保存してあるメッセージを、APIに送る形にする（テキスト添付は本文に足し、画像は別に渡す）
 function apiMessage(m) {
-  const texts = (m.files || []).filter((f) => f.kind === 'text').map((f) => `【添付ファイル: ${f.name}】\n${f.text}`);
+  const texts = filesOf(m).filter((f) => f.kind === 'text').map((f) => `【添付ファイル: ${f.name}】\n${f.text}`);
   return {
     role: m.role,
     text: [m.text, ...texts].filter(Boolean).join('\n\n'),
-    images: (m.files || []).filter((f) => f.kind === 'image').map((f) => ({ mime: f.mime, data: f.data })),
+    images: filesOf(m).filter((f) => f.kind === 'image').map((f) => ({ mime: f.mime, data: f.data })),
   };
 }
 
@@ -801,6 +848,9 @@ function openInsertSheet() {
   show('#sheet');
 }
 
+// メッセージの添付。編集で作った枝は、元のメッセージの添付を参照する（画像を二重に保存しない）
+const filesOf = (m) => m.files || (m.filesRef && S.fileStore?.get(m.filesRef)) || [];
+
 const continueFrom = (m) => generate(m.id, { extraUser: S.settings.ui.continueText.trim() || '続きを書いてください。' });
 
 async function generate(parentId, opts = {}) {
@@ -834,7 +884,7 @@ async function generate(parentId, opts = {}) {
   const body = box.querySelector(`[data-id="${m.id}"] .body`);
   const ui = S.settings.ui;
   const started = Date.now();
-  const waiting = () => `${m.thought ? '思考中' : '応答待ち'}…${ui.showTimer ? ` ${Math.round((Date.now() - started) / 1000)}秒` : ''}`;
+  const waiting = () => S.retryNote || `${m.thought ? '思考中' : '応答待ち'}…${ui.showTimer ? ` ${Math.round((Date.now() - started) / 1000)}秒` : ''}`;
   body.textContent = waiting();
   let queued = false;
   const paint = () => {
@@ -851,17 +901,38 @@ async function generate(parentId, opts = {}) {
   };
 
   const ticker = setInterval(() => { if (!m.text) paint(); }, 1000);
-  try {
-    for await (const ev of streamChat(conn, { system, messages: history, signal: S.abort.signal })) {
-      if (ev.text) { m.text += ev.text; got = true; }
-      if (ev.thought) m.thought += ev.thought;
-      if (ev.notice) m.notice = ev.notice;
-      if (ev.usage) m.usage = ev.usage;
-      paint();
+  const tries = Number(ui.retries ?? 2);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      for await (const ev of streamChat(conn, { system, messages: history, signal: S.abort.signal })) {
+        if (ev.text) { m.text += ev.text; got = true; }
+        if (ev.thought) m.thought += ev.thought;
+        if (ev.notice) m.notice = ev.notice;
+        if (ev.usage) m.usage = ev.usage;
+        paint();
+      }
+      break;
+    } catch (e) {
+      if (e.name === 'AbortError') break;
+      // 混雑（429）・サーバー側のエラー（5xx）・通信の失敗は、返事がまだ1文字も来ていなければ、少し待ってやり直す
+      if (!got && e.retryable && attempt < tries) {
+        const wait = [4, 10, 20][attempt] || 20;
+        m.thought = '';
+        S.retryNote = `混んでいるようです。${wait}秒後にやり直します（${attempt + 1}/${tries}）`;
+        paint();
+        const ok = await new Promise((resolve) => {
+          const t = setTimeout(() => resolve(true), wait * 1000);
+          S.abort.signal.addEventListener('abort', () => { clearTimeout(t); resolve(false); }, { once: true });
+        });
+        S.retryNote = '';
+        if (ok) continue;
+        break;
+      }
+      S.error = e.message;
+      break;
     }
-  } catch (e) {
-    if (e.name !== 'AbortError') S.error = e.message;
   }
+  S.retryNote = '';
 
   clearInterval(ticker);
   S.busy = false;
@@ -890,7 +961,7 @@ async function send() {
     return;
   }
   const m = { id: uid(), chatId: S.chat.id, parentId: S.chat.leafId ?? null, role: 'user', text, createdAt: Date.now() };
-  if (S.pending.length) { m.files = S.pending; S.pending = []; renderPending(); }
+  if (S.pending.length) { m.files = S.pending; S.fileStore?.set(m.id, m.files); S.pending = []; renderPending(); }
   S.msgs.set(m.id, m);
   S.chat.leafId = m.id;
   if (!S.chat.title) S.chat.title = (text || m.files[0].name).replace(/\s+/g, ' ').slice(0, 24);
@@ -930,7 +1001,7 @@ async function saveEdit(m, text, asBranch) {
     return;
   }
   const copy = { id: uid(), chatId: m.chatId, parentId: m.parentId, role: m.role, text, createdAt: Date.now() };
-  if (m.files) copy.files = m.files;
+  if (m.files) copy.filesRef = m.id; else if (m.filesRef) copy.filesRef = m.filesRef;
   S.msgs.set(copy.id, copy);
   S.chat.leafId = copy.id;
   await Promise.all([db.put('messages', copy), saveChat()]);
@@ -938,22 +1009,148 @@ async function saveEdit(m, text, asBranch) {
   else render();
 }
 
+// ---------- ゴミ箱 ----------
+// 削除したチャットとメッセージは30日間残し、ゴミ箱から戻せる。
+const TRASH_DAYS = 30;
+
+// 完全に消す。消すメッセージの添付を参照している枝があれば、添付をそちらへ移す。
+async function eraseMessages(list) {
+  const gone = new Set(list.map((m) => m.id));
+  const byChat = new Map();
+  for (const m of list) if (m.files) byChat.set(m.chatId, true);
+  const fix = [];
+  for (const chatId of byChat.keys()) {
+    const all = await db.messagesOf(chatId);
+    for (const src of list.filter((m) => m.chatId === chatId && m.files)) {
+      const users = all.filter((x) => x.filesRef === src.id && !gone.has(x.id));
+      if (!users.length) continue;
+      const [heir, ...rest] = users;
+      heir.files = src.files; delete heir.filesRef; fix.push(heir);
+      for (const r of rest) { r.filesRef = heir.id; fix.push(r); }
+      if (S.chat?.id === chatId) S.fileStore?.set(heir.id, heir.files);
+    }
+  }
+  if (fix.length) await db.putMany('messages', fix);
+  await db.delMany('messages', [...gone]);
+}
+
+async function purgeTrash() {
+  const limit = Date.now() - TRASH_DAYS * 86400000;
+  const [chats, messages] = await Promise.all([db.all('chats'), db.all('messages')]);
+  const oldChats = chats.filter((c) => c.deletedAt && c.deletedAt < limit);
+  const oldChatIds = new Set(oldChats.map((c) => c.id));
+  const oldMsgs = messages.filter((m) => oldChatIds.has(m.chatId) || (m.deletedAt && m.deletedAt < limit));
+  if (oldMsgs.length) await eraseMessages(oldMsgs);
+  if (oldChats.length) await db.delMany('chats', [...oldChatIds]);
+}
+
+async function openTrash() {
+  $('#sheetTitle').textContent = 'ゴミ箱';
+  const [chats, messages] = await Promise.all([db.all('chats'), db.all('messages')]);
+  const deadChats = chats.filter((c) => c.deletedAt).sort((a, b) => b.deletedAt - a.deletedAt);
+  const live = new Map(chats.filter((c) => !c.deletedAt).map((c) => [c.id, c]));
+  const groups = new Map();
+  for (const m of messages) if (m.deletedAt && live.has(m.chatId)) {
+    const g = groups.get(m.trashGroup || m.id) || { id: m.trashGroup || m.id, chat: live.get(m.chatId), list: [] };
+    g.list.push(m);
+    groups.set(g.id, g);
+  }
+  const msgGroups = [...groups.values()].map((g) => ({ ...g, head: g.list.find((m) => m.id === g.id) || g.list[0], at: Math.max(...g.list.map((m) => m.deletedAt)) })).sort((a, b) => b.at - a.at);
+  const left = (t) => Math.max(1, Math.ceil((t + TRASH_DAYS * 86400000 - Date.now()) / 86400000));
+  const snippet = (t) => (t || '（添付のみ）').replace(/\s+/g, ' ').slice(0, 50);
+  const row = (title, sub, restore, erase) => h('div', { class: 'trashrow' },
+    h('div', { class: 'tmain' }, h('div', { class: 't', text: title }), h('div', { class: 'd', text: sub })),
+    h('div', { class: 'acts' }, h('button', { text: '戻す', onclick: restore }), h('button', { class: 'danger', text: '完全に削除', onclick: erase })));
+  $('#sheetBody').replaceChildren(...[
+    h('p', { class: 'hint', text: `削除したチャットとメッセージは、${TRASH_DAYS}日間ここに残ります。過ぎると自動で完全に削除されます。` }),
+    h('p', { class: 'grouphead', text: 'チャット' }),
+    ...deadChats.map((c) => row(c.title || '（無題）', `削除 ${stamp(c.deletedAt)}・あと${left(c.deletedAt)}日`,
+      async () => { delete c.deletedAt; await db.put('chats', c); S.chats.push(c); toast('チャットを戻しました'); openTrash(); },
+      async () => {
+        if (!confirm(`「${c.title || '無題'}」を完全に削除します。元に戻せません。`)) return;
+        await eraseMessages(await db.messagesOf(c.id)); await db.del('chats', c.id); openTrash();
+      })),
+    !deadChats.length && h('p', { class: 'hint', text: 'ありません。' }),
+    h('p', { class: 'grouphead', text: 'メッセージ' }),
+    ...msgGroups.map((g) => row(`${g.head.role === 'user' ? '自分' : g.head.side ? '番外' : 'AI'}：${snippet(g.head.text)}`,
+      `${g.chat.title || '（無題）'}${g.list.length > 1 ? `・続き ${g.list.length - 1} 件も` : ''}・あと${left(g.at)}日`,
+      () => restoreGroup(g), async () => {
+        if (!confirm('このメッセージを完全に削除します。元に戻せません。')) return;
+        await eraseMessages(g.list); openTrash();
+      })),
+    !msgGroups.length && h('p', { class: 'hint', text: 'ありません。' }),
+    (deadChats.length || msgGroups.length) && h('div', { class: 'btnrow' }, h('button', { class: 'danger', text: 'ゴミ箱を空にする', onclick: async () => {
+      if (!confirm('ゴミ箱の中身をすべて完全に削除します。元に戻せません。')) return;
+      await eraseMessages([...messages.filter((m) => m.deletedAt), ...messages.filter((m) => deadChats.some((c) => c.id === m.chatId))]);
+      await db.delMany('chats', deadChats.map((c) => c.id));
+      openTrash();
+    } })),
+  ].filter(Boolean));
+  show('#sheet');
+}
+
+// 戻す。親がまだゴミ箱にあれば、親も一緒に戻す。番外を消したときに付け替えた続きは、番外の下へ戻す。
+async function restoreGroup(g) {
+  const all = await db.messagesOf(g.chat.id);
+  const byId = new Map(all.map((m) => [m.id, m]));
+  const back = new Set(g.list.map((m) => m.id));
+  let p = byId.get(g.head.parentId);
+  while (p) {
+    if (p.deletedAt) for (const m of all) if (m.deletedAt && (m.trashGroup || m.id) === (p.trashGroup || p.id)) back.add(m.id);
+    p = byId.get(p.parentId);
+  }
+  const changed = [];
+  for (const id of back) {
+    const m = byId.get(id);
+    delete m.deletedAt; delete m.trashGroup;
+    if (m.sideKids) {
+      for (const kid of m.sideKids.map((k) => byId.get(k)).filter(Boolean)) if (kid.parentId === m.parentId) { kid.parentId = m.id; changed.push(kid); }
+      delete m.sideKids;
+    }
+    changed.push(m);
+  }
+  await db.putMany('messages', changed);
+  // 今のチャットの続きにあたる部分を戻したなら、表示もその先までつなぐ
+  const chat = S.chats.find((c) => c.id === g.chat.id) || g.chat;
+  const head = byId.get(g.head.id);
+  let top = head;
+  while (top.parentId && back.has(top.parentId)) top = byId.get(top.parentId);
+  if ((chat.leafId ?? null) === (top.parentId ?? null)) {
+    let id = head.prevLeaf && back.has(head.prevLeaf) ? head.prevLeaf : head.id;
+    for (;;) {
+      const kids = all.filter((m) => m.parentId === id && !m.deletedAt).sort((a, b) => a.createdAt - b.createdAt);
+      if (!kids.length) break;
+      id = kids[kids.length - 1].id;
+    }
+    chat.leafId = id;
+    delete head.prevLeaf;
+    await Promise.all([db.put('chats', chat), db.put('messages', head)]);
+  }
+  if (S.chat?.id === g.chat.id) await openChat(S.chat);
+  toast('メッセージを戻しました');
+  openTrash();
+}
+
 async function removeMessage(m) {
   if (m.side) {
-    if (!S.settings.ui.skipDeleteConfirm && !confirm('この番外を削除しますか？\nこのあとに続く会話は残ります。')) return;
+    if (!S.settings.ui.skipDeleteConfirm && !confirm(`この番外を削除しますか？\nこのあとに続く会話は残ります。（${TRASH_DAYS}日間はゴミ箱から戻せます）`)) return;
     const kids = childrenOf(m.id);
     kids.forEach((k) => { k.parentId = m.parentId; });
     S.msgs.delete(m.id);
     if (S.chat.leafId === m.id) S.chat.leafId = m.parentId;
+    Object.assign(m, { deletedAt: Date.now(), trashGroup: m.id, sideKids: kids.map((k) => k.id) });
     S.error = '';
     render();
-    await Promise.all([db.putMany('messages', kids), db.del('messages', m.id), saveChat()]);
+    await Promise.all([db.putMany('messages', [...kids, m]), saveChat()]);
     return;
   }
   const ids = subtree(m.id);
   const more = ids.length > 1 ? `\nこの先に続く ${ids.length - 1} 件も一緒に消えます。` : '';
-  if (!S.settings.ui.skipDeleteConfirm && !confirm(`このメッセージを削除しますか？${more}`)) return;
+  if (!S.settings.ui.skipDeleteConfirm && !confirm(`このメッセージを削除しますか？${more}\n（${TRASH_DAYS}日間はゴミ箱から戻せます）`)) return;
   const onPath = pathTo(S.chat.leafId).includes(m);
+  const now = Date.now();
+  if (onPath) m.prevLeaf = S.chat.leafId;   // 戻したときに、読んでいた枝の先へ戻れるように
+  const trashed = ids.map((id) => Object.assign(S.msgs.get(id), { deletedAt: now, trashGroup: m.id }));
   ids.forEach((id) => S.msgs.delete(id));
   if (onPath) {
     const sibs = childrenOf(m.parentId);
@@ -961,7 +1158,7 @@ async function removeMessage(m) {
   }
   S.error = '';
   render();
-  await Promise.all([db.delMany('messages', ids), saveChat()]);
+  await Promise.all([db.putMany('messages', trashed), saveChat()]);
 }
 
 // ---------- パネル ----------
@@ -994,7 +1191,7 @@ async function searchChats(q) {
   chatQuery = q.trim();
   if (chatQuery && !bodyIndex) {
     bodyIndex = new Map();
-    for (const m of await db.all('messages')) bodyIndex.set(m.chatId, `${bodyIndex.get(m.chatId) || ''}\n${m.text}`);
+    for (const m of await db.all('messages')) if (!m.deletedAt) bodyIndex.set(m.chatId, `${bodyIndex.get(m.chatId) || ''}\n${m.text}`);
   }
   openDrawer(true);
 }
@@ -1011,6 +1208,7 @@ function openDrawer(keepSearch) {
     h('button', { text: '全出力', onclick: exportData }),
     h('button', { text: '取込', onclick: () => pickFile('.json,application/json', (f) => importData(f).then(openDrawer)) }),
     h('button', { text: 'テキスト取込', onclick: () => pickFile('.txt,text/plain', importText) }),
+    h('button', { 'aria-label': 'ゴミ箱', class: 'trashbtn', onclick: openTrash }, icon('trash')),
   );
   $('#chatList').replaceChildren(...S.chats
     .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updatedAt - a.updatedAt)
@@ -1038,18 +1236,30 @@ function openDrawer(keepSearch) {
   show('#drawer');
 }
 
+function liveMessages(all) {
+  const byId = new Map(all.map((m) => [m.id, m]));
+  return all.filter((m) => !m.deletedAt).map((m) => {
+    if (!m.filesRef) return m;
+    const src = byId.get(m.filesRef);
+    if (src && !src.deletedAt) return m;
+    const out = { ...m, files: src?.files || [] };
+    delete out.filesRef;
+    return out;
+  });
+}
+
 async function exportChat(c) {
-  const messages = await db.messagesOf(c.id);
+  const messages = liveMessages(await db.messagesOf(c.id));
   const data = { app: 'sousaku-pwa', version: 1, exportedAt: new Date().toISOString(), chats: [c], messages, chars: await packChars([...chatChars(normalizeChat(c)), heroOf(c)?.card].filter(Boolean)) };
   await saveFile(new File([JSON.stringify(data)], `${(c.title || 'チャット').replace(/[\\/:*?"<>|\n]/g, '_')}.json`, { type: 'application/json' }));
 }
 
 async function duplicateChat(c) {
-  const msgs = await db.messagesOf(c.id);
+  const msgs = liveMessages(await db.messagesOf(c.id));
   const ids = new Map(msgs.map((m) => [m.id, uid()]));
   const copy = { ...c, id: uid(), title: `${c.title || '無題'}（複製）`, createdAt: Date.now(), updatedAt: Date.now(), leafId: ids.get(c.leafId) ?? null };
   if (c.summary) copy.summary = { ...c.summary, uptoId: ids.get(c.summary.uptoId) };
-  await db.putMany('messages', msgs.map((m) => ({ ...m, id: ids.get(m.id), chatId: copy.id, parentId: m.parentId ? ids.get(m.parentId) : null })));
+  await db.putMany('messages', msgs.map((m) => ({ ...m, id: ids.get(m.id), chatId: copy.id, parentId: m.parentId ? ids.get(m.parentId) : null, ...(m.filesRef ? { filesRef: ids.get(m.filesRef) } : {}) })));
   await db.put('chats', copy);
   S.chats.unshift(copy);
   openDrawer();
@@ -1070,9 +1280,9 @@ async function importText(file) {
 }
 
 async function removeChat(c) {
-  if (!confirm(`「${c.title || '無題'}」を削除しますか？\n枝分かれした分もすべて消えます。`)) return;
-  const ids = (await db.messagesOf(c.id)).map((m) => m.id);
-  await Promise.all([db.delMany('messages', ids), db.del('chats', c.id)]);
+  if (!confirm(`「${c.title || '無題'}」を削除しますか？\n${TRASH_DAYS}日間はゴミ箱から戻せます。`)) return;
+  c.deletedAt = Date.now();
+  await db.put('chats', c);
   S.chats = S.chats.filter((x) => x !== c);
   if (S.chat === c) await openChat(blankChat());
   openDrawer();
@@ -1520,8 +1730,32 @@ function showFatal(e) {
       h('button', { text: 'キャッシュを削除して開き直す', onclick: refreshApp }))));
 }
 
+// しばらく書き出していなければ、上に知らせを出す
+function checkBackup() {
+  const last = S.settings.lastBackupAt || 0;
+  const newest = Math.max(0, ...S.chats.map((c) => c.updatedAt || 0));
+  const days = Math.floor((Date.now() - last) / 86400000);
+  const due = S.chats.length && newest > last && days >= 7 && Date.now() > (S.settings.backupSnoozeUntil || 0);
+  const bar = $('#backupBar');
+  bar.hidden = !due;
+  if (!due) return;
+  bar.replaceChildren(
+    h('span', { text: last ? `前回のバックアップから${days}日経っています。` : 'まだ一度もバックアップしていません。' }),
+    h('button', { class: 'primary', text: '書き出す', onclick: exportData }),
+    h('button', { text: 'あとで', onclick: async () => { S.settings.backupSnoozeUntil = Date.now() + 3 * 86400000; await saveSettings(); bar.hidden = true; } }));
+}
+
 async function exportData() {
-  const [chats, messages, prompts, chars] = await Promise.all([db.all('chats'), db.all('messages'), db.all('prompts'), db.all('chars')]);
+  const [allChats, allMessages, prompts, chars, bg] = await Promise.all([db.all('chats'), db.all('messages'), db.all('prompts'), db.all('chars'), db.kvGet('bg')]);
+  const chats = allChats.filter((c) => !c.deletedAt);
+  const deadChats = new Set(allChats.filter((c) => c.deletedAt).map((c) => c.id));
+  const messages = liveMessages(allMessages.filter((m) => !deadChats.has(m.chatId)));
+  // 設定も入れる（APIキーは入れない）
+  const settings = {
+    connections: S.settings.connections.map(({ apiKey, ...rest }) => rest),
+    activeConnId: S.settings.activeConnId, ui: S.settings.ui, summary: S.settings.summary,
+    showImages: S.settings.showImages, bg: bg instanceof Blob ? await toDataUrl(bg) : null,
+  };
   // 巨大な1本の文字列を作るとメモリ不足で失敗しやすいので、1件ずつ小分けにしてファイルにする
   const parts = [`{"app":"sousaku-pwa","version":1,"exportedAt":"${new Date().toISOString()}"`];
   for (const [key, list] of Object.entries({ chats, messages, prompts, chars: await packChars(chars), inserts: S.settings.inserts })) {
@@ -1529,13 +1763,18 @@ async function exportData() {
     list.forEach((item, i) => parts.push((i ? ',' : '') + JSON.stringify(item)));
     parts.push(']');
   }
-  parts.push('}');
-  await saveFile(new File(parts, `sousaku-backup-${new Date().toISOString().slice(0, 10)}.json`, { type: 'application/json' }));
+  parts.push(`,"settings":${JSON.stringify(settings)}}`);
+  const saved = await saveFile(new File(parts, `sousaku-backup-${new Date().toISOString().slice(0, 10)}.json`, { type: 'application/json' }));
+  if (saved !== false) {
+    S.settings.lastBackupAt = Date.now();
+    await saveSettings();
+    $('#backupBar').hidden = true;
+  }
 }
 
 async function saveFile(file) {
   if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; }
+    try { await navigator.share({ files: [file] }); return true; } catch (e) { if (e.name === 'AbortError') return false; }
   }
   const a = h('a', { href: URL.createObjectURL(file), download: file.name });
   a.click();
@@ -1555,6 +1794,16 @@ async function importData(file) {
     }
     if (data.inserts?.length) await saveSettings();
     await db.putMany('chars', await unpackChars(data.chars || []));
+    if (data.settings && confirm('このファイルには設定（接続先・表示・要約など）も入っています。今の設定を、ファイルの設定に置き換えますか？\nAPIキーは入っていないので、今のものがそのまま使われます。\n「キャンセル」なら設定は今のまま、チャットなどだけを読み込みます。')) {
+      const st = data.settings;
+      const keys = new Map(S.settings.connections.map((c) => [c.id, c.apiKey]));
+      if (Array.isArray(st.connections) && st.connections.length) S.settings.connections = st.connections.map((c) => ({ ...c, apiKey: keys.get(c.id) || '' }));
+      if (st.activeConnId) S.settings.activeConnId = st.activeConnId;
+      for (const k of ['ui', 'summary']) if (st[k]) S.settings[k] = { ...S.settings[k], ...st[k] };
+      if (st.showImages != null) S.settings.showImages = st.showImages;
+      if (st.bg) await db.kvSet('bg', await (await fetch(st.bg)).blob());
+      await saveSettings();
+    }
     await loadAll();
     if (!$('#settings').hidden) renderSettings();
     toast(`読み込みました（チャット ${data.chats?.length || 0} 件）`);
@@ -1691,7 +1940,8 @@ function renderSettings() {
         check('autoScroll', '返事が届いている間、自動で下へスクロールする'),
         check('showTimer', '返事を待っている間、秒数を表示する'),
         check('enterSend', 'Enterキーで送信する', 'オンにすると、iPhoneのキーボードでは「改行」キーで送信されます（改行できなくなります）。外付けキーボードやPC向けです。Shift+Enterで改行できます。'),
-        check('skipDeleteConfirm', 'メッセージ削除のときに確認しない')),
+        check('skipDeleteConfirm', 'メッセージ削除のときに確認しない'),
+        field('混んでいるときの自動やり直し', select(ui, 'retries', [['0', 'しない'], ['1', '1回まで'], ['2', '2回まで'], ['3', '3回まで']], save), '「利用上限（429）」やサーバーのエラーで失敗したとき、少し待って自動でやり直します。返事が途中まで来ていたらやり直しません。')),
       h('div', { class: 'card' },
         h('strong', { text: 'メッセージのボタン' }),
         field('ボタンの出し方', select(ui, 'toolsMode', { always: 'いつも表示する', tap: '吹き出しをタップしたときだけ表示する' }, save), '「タップしたときだけ」でも、最後のメッセージにはいつも表示されます。'),
@@ -1749,7 +1999,10 @@ function resizeInput() {
 }
 
 async function loadAll() {
-  const [settings, prompts, chats, chars] = await Promise.all([db.kvGet('settings'), db.all('prompts'), db.all('chats'), db.all('chars')]);
+  await purgeTrash().catch(() => {});
+  setTimeout(checkBackup, 1500);
+  const [settings, prompts, allChats, chars] = await Promise.all([db.kvGet('settings'), db.all('prompts'), db.all('chats'), db.all('chars')]);
+  const chats = allChats.filter((c) => !c.deletedAt);
   S.chars = chars.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   const uiDefaults = S.settings.ui;
   Object.assign(S.settings, settings);
