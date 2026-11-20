@@ -351,11 +351,30 @@ function scrollBottom() {
 }
 
 const num = (n) => Number(n || 0).toLocaleString();
-const usageText = (u) => `入力 ${num(u.in)}${u.cached ? `（うちキャッシュ ${num(u.cached)}・${Math.round((u.cached / Math.max(1, u.in)) * 100)}％）` : ''} ／ 出力 ${num(u.out)}${u.think ? ` ／ 思考 ${num(u.think)}` : ''} トークン`;
+// ---------- 換算トークン ----------
+// 「入力1トークン何個分か」に直した数。料金表の倍率をモデルごとに登録しておく。
+// 出力と思考は同じ倍率（料金表の「出力レスポンス / 推論テキスト」）。
+const KNOWN_RATES = { 'gemini-4-neon': { in: 1, cache: 0.05, out: 5 } };
+const modelIdOf = (m) => m.modelId || (m.model || '').replace(/（.*）$/, '');
+const ratesFor = (id) => S.settings.rates?.[id] || KNOWN_RATES[id] || null;
+function converted(u, r) {
+  if (!u || !r) return null;
+  const cached = u.cached || 0;
+  return Math.max(0, u.in - cached) * Number(r.in ?? 1) + cached * Number(r.cache ?? 1) + (u.out + (u.think || 0)) * Number(r.out ?? 1);
+}
+const usageText = (u, m) => {
+  const conv = m && converted(u, ratesFor(modelIdOf(m)));
+  return `入力 ${num(u.in)}${u.cached ? `（うちキャッシュ ${num(u.cached)}・${Math.round((u.cached / Math.max(1, u.in)) * 100)}％）` : ''} ／ 出力 ${num(u.out)}${u.think ? ` ／ 思考 ${num(u.think)}` : ''} トークン${conv != null ? ` ／ 換算 ${num(Math.round(conv))}` : ''}`;
+};
 
 function openUsage() {
   $('#sheetTitle').textContent = '使用量';
-  const sum = (list) => list.reduce((t, m) => (m.usage ? { n: t.n + 1, in: t.in + m.usage.in, out: t.out + m.usage.out, think: t.think + m.usage.think, cached: t.cached + m.usage.cached } : t), { n: 0, in: 0, out: 0, think: 0, cached: 0 });
+  const sum = (list) => list.reduce((t, m) => {
+    if (!m.usage) return t;
+    const conv = converted(m.usage, ratesFor(modelIdOf(m)));
+    return { n: t.n + 1, in: t.in + m.usage.in, out: t.out + m.usage.out, think: t.think + m.usage.think, cached: t.cached + m.usage.cached,
+      conv: t.conv + (conv || 0), convN: t.convN + (conv != null ? 1 : 0) };
+  }, { n: 0, in: 0, out: 0, think: 0, cached: 0, conv: 0, convN: 0 });
   const table = (title, t) => h('div', { class: 'card' },
     h('strong', { text: title }),
     t.n ? h('div', { class: 'usagegrid' },
@@ -363,17 +382,38 @@ function openUsage() {
       h('span', { text: '入力' }), h('b', { text: `${num(t.in)} トークン` }),
       h('span', { text: 'うちキャッシュ' }), h('b', { text: `${num(t.cached)} トークン（${Math.round((t.cached / Math.max(1, t.in)) * 100)}％）` }),
       h('span', { text: '出力' }), h('b', { text: `${num(t.out)} トークン` }),
-      h('span', { text: '思考' }), h('b', { text: `${num(t.think)} トークン` }))
+      h('span', { text: '思考' }), h('b', { text: `${num(t.think)} トークン` }),
+      h('span', { class: 'conv', text: '換算' }), h('b', { class: 'conv', text: t.convN ? `${num(Math.round(t.conv))}${t.convN < t.n ? `（${t.convN}回分）` : ''}` : '倍率が未登録' }))
       : h('p', { class: 'hint', text: 'まだ記録がありません（この機能を入れたあとの返事から数えます）。' }));
   const path = pathTo(S.chat.leafId);
   const last = [...path].reverse().find((m) => m.usage);
-  $('#sheetBody').replaceChildren(
+
+  // 今のモデルの倍率
+  const model = activeConn()?.model || '';
+  const rates = (S.settings.rates ||= {});
+  const cur = { ...(rates[model] || KNOWN_RATES[model] || { in: '', cache: '', out: '' }) };
+  const rateField = (key, label) => {
+    const el = h('input', { type: 'number', step: 'any', min: '0', inputMode: 'decimal', value: cur[key] ?? '' });
+    el.addEventListener('change', () => {
+      cur[key] = el.value;
+      if (['in', 'cache', 'out'].every((k) => cur[k] === '' || cur[k] == null)) delete rates[model];
+      else rates[model] = { in: Number(cur.in || 1), cache: Number(cur.cache === '' ? cur.in || 1 : cur.cache), out: Number(cur.out || 1) };
+      saveSettings();
+    });
+    return h('label', { class: 'f' }, label, el);
+  };
+  $('#sheetBody').replaceChildren(...[
     h('p', { class: 'hint', text: 'AIから返ってきた実際の数字です。入力は「毎回送っている量」で、会話が長いほど増えます。キャッシュは、前回と同じ出だしの部分が割引で処理された量です。' }),
-    last && h('div', { class: 'card' }, h('strong', { text: '直近の返事' }), h('p', { class: 'hint', text: usageText(last.usage) })),
+    last && h('div', { class: 'card' }, h('strong', { text: '直近の返事' }), h('p', { class: 'hint', text: usageText(last.usage, last) })),
     table('今見ている枝の合計', sum(path)),
     table('このチャット全体（消していない枝すべて）', sum([...S.msgs.values()])),
-    h('p', { class: 'hint', text: '料金の金額は表示していません（モデルごとの単価が変わるため）。要約・スマホをのぞく・AI整理で使った分は、ここには含まれません。' }),
-  );
+    model && h('details', { class: 'card' },
+      h('summary', { text: `換算の倍率（${model}）${rates[model] || KNOWN_RATES[model] ? '' : '・未登録'}` }),
+      h('p', { class: 'hint', text: '換算トークンは「入力1トークン何個分か」に直した数です。料金表の「1 ○○トークン = △ トークン」の △ を入れます。出力と思考は同じ倍率です。モデルを切り替えると、そのモデルの倍率を登録できます。' }),
+      h('div', { class: 'rategrid' }, rateField('in', '入力'), rateField('cache', 'キャッシュ読み取り'), rateField('out', '出力・思考')),
+      h('p', { class: 'hint', text: 'キャッシュ書き込みの割増は、AIから量が返ってこないため数えていません。' })),
+    h('p', { class: 'hint', text: '要約・スマホをのぞく・AI整理で使った分は、ここには含まれません。' }),
+  ].filter(Boolean));
   show('#sheet');
 }
 
@@ -405,7 +445,7 @@ function messageEl(m, index) {
       ? h('img', { src: `data:${f.mime};base64,${f.data}`, alt: f.name })
       : h('span', { class: 'filechip' }, icon('clip'), f.name))));
     if (m.notice) bubble.append(h('div', { class: 'hint', text: `※ ${m.notice}` }));
-    if (m.usage && showInfo) bubble.append(h('div', { class: 'meta usage', text: usageText(m.usage) }));
+    if (m.usage && showInfo) bubble.append(h('div', { class: 'meta usage', text: usageText(m.usage, m) }));
     if (m.loaded?.length) bubble.append(h('div', { class: 'hint' }, icon('book'), `詳細を読み込み: ${m.loaded.join('、')}`));
   }
   el.append(bubble);
@@ -869,6 +909,7 @@ async function generate(parentId, opts = {}) {
   const m = { id: uid(), chatId: S.chat.id, parentId, role: 'assistant', text: prefill && conn.tailJoin ? prefill : '', thought: '', createdAt: Date.now() };
   if (loaded.length) m.loaded = loaded;
   if (opts.side) Object.assign(m, { side: true, sideName: opts.side.name, sideText: opts.side.text });
+  m.modelId = conn?.type === 'dummy' ? '' : conn?.model || '';
   m.model = modelLabel(conn) + (S.settings.connections.length > 1 && conn?.type !== 'dummy' ? `（${conn.name}）` : '');
   const chat = S.chat;
   S.msgs.set(m.id, m);

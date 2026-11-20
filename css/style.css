@@ -444,3 +444,5 @@ textarea.tapedit { cursor: pointer; }
 .findrow .snip { font-size: 14px; line-height: 1.6; }
 .findrow mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; border-radius: 3px; padding: 0 2px; }
 .msg.found .bubble { outline: 3px solid var(--accent); outline-offset: 2px; transition: outline-color 1.5s; }
+.usagegrid .conv { color: var(--accent); font-weight: 700; }
+.rategrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; } .rategrid label.f { margin-top: 4px; font-size: 12px; }
