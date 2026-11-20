@@ -30,11 +30,19 @@ async function run(stores, mode, fn) {
   });
 }
 
+// 保存するたびに「最後に保存した日時」を付ける（読み込み時に、手元とファイルのどちらが新しいか比べるため）
+const STAMPED = new Set(['chats', 'messages', 'prompts', 'chars']);
+const stamp = (store, v) => {
+  if (STAMPED.has(store) && v && typeof v === 'object') v.savedAt = Date.now();
+  return v;
+};
+
 export const db = {
   all: (store) => run(store, 'readonly', (t) => t.objectStore(store).getAll()),
-  put: (store, value) => run(store, 'readwrite', (t) => t.objectStore(store).put(value)),
-  putMany: (store, values) =>
-    run(store, 'readwrite', (t) => { for (const v of values) t.objectStore(store).put(v); }),
+  put: (store, value) => run(store, 'readwrite', (t) => t.objectStore(store).put(stamp(store, value))),
+  // keepStamp: 読み込んだデータは、ファイルに入っていた保存日時のまま入れる
+  putMany: (store, values, { keepStamp = false } = {}) =>
+    run(store, 'readwrite', (t) => { for (const v of values) t.objectStore(store).put(keepStamp ? v : stamp(store, v)); }),
   del: (store, id) => run(store, 'readwrite', (t) => t.objectStore(store).delete(id)),
   delMany: (store, ids) =>
     run(store, 'readwrite', (t) => { for (const id of ids) t.objectStore(store).delete(id); }),

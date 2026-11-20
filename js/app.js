@@ -1611,11 +1611,12 @@ function connCard(c) {
 }
 
 function insertCard(i) {
+  const saveIns = () => { i.savedAt = Date.now(); saveSettings(); };
   const card = h('details', { class: 'card', open: S.openCard === i.id },
     h('summary', { text: i.name || '（名前なし）' }),
-    field('名前', bound(i, 'name', () => { saveSettings(); card.querySelector('summary').textContent = i.name || '（名前なし）'; }, { type: 'text' })),
-    field('出し方', select(i, 'mode', { side: '番外として別枠に出す（会話には影響しない）', steer: '本編に反映する（返事が続きになる）' }, saveSettings)),
-    field('指示', bound(i, 'text', saveSettings, { class: 'big' }, 'textarea')),
+    field('名前', bound(i, 'name', () => { saveIns(); card.querySelector('summary').textContent = i.name || '（名前なし）'; }, { type: 'text' })),
+    field('出し方', select(i, 'mode', { side: '番外として別枠に出す（会話には影響しない）', steer: '本編に反映する（返事が続きになる）' }, saveIns)),
+    field('指示', bound(i, 'text', saveIns, { class: 'big' }, 'textarea')),
     h('div', { class: 'btnrow' }, h('button', { class: 'danger', text: '削除', onclick: () => {
       if (!confirm(`「${i.name}」を削除しますか？`)) return;
       S.settings.inserts = S.settings.inserts.filter((x) => x !== i);
@@ -1822,19 +1823,42 @@ async function saveFile(file) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
+// 1つの保存場所に、ファイルの中身を合わせる。同じものは、保存日時が新しいほうを残す。
+const stampOf = (x, store) => x.savedAt || (store === 'chats' ? x.updatedAt : 0) || 0;
+async function mergeInto(store, list) {
+  const local = new Map((await db.all(store)).map((x) => [x.id, x]));
+  const put = [];
+  const r = { added: 0, updated: 0, kept: 0 };
+  for (const item of list) {
+    const cur = local.get(item.id);
+    if (!cur) { put.push(item); r.added++; continue; }
+    if (stampOf(cur, store) > stampOf(item, store)) { r.kept++; continue; }
+    if (store !== 'chars' && JSON.stringify(cur) === JSON.stringify(item)) continue;
+    put.push(item);
+    r.updated++;
+  }
+  if (put.length) await db.putMany(store, put, { keepStamp: true });
+  return r;
+}
+
 async function importData(file) {
   try {
     const data = JSON.parse(await file.text());
     if (data.app !== 'sousaku-pwa') throw new Error('このアプリの書き出しファイルではありません。');
-    await db.putMany('chats', data.chats || []);
-    await db.putMany('messages', data.messages || []);
-    await db.putMany('prompts', data.prompts || []);
+    // 手元のほうが新しいものは上書きしない。ファイルにしかないものは足す。
+    const total = { added: 0, updated: 0, kept: 0 };
+    for (const [store, list] of [['chats', data.chats], ['messages', data.messages], ['prompts', data.prompts], ['chars', await unpackChars(data.chars || [])]]) {
+      const r = await mergeInto(store, list || []);
+      for (const k in total) total[k] += r[k];
+    }
+    let insChanged = false;
     for (const ins of data.inserts || []) {
       const i = S.settings.inserts.findIndex((x) => x.id === ins.id);
-      if (i >= 0) S.settings.inserts[i] = ins; else S.settings.inserts.push(ins);
+      if (i < 0) { S.settings.inserts.push(ins); insChanged = true; total.added++; }
+      else if ((S.settings.inserts[i].savedAt || 0) > (ins.savedAt || 0)) total.kept++;
+      else if (JSON.stringify(S.settings.inserts[i]) !== JSON.stringify(ins)) { S.settings.inserts[i] = ins; insChanged = true; total.updated++; }
     }
-    if (data.inserts?.length) await saveSettings();
-    await db.putMany('chars', await unpackChars(data.chars || []));
+    if (insChanged) await saveSettings();
     if (data.settings && confirm('このファイルには設定（接続先・表示・要約など）も入っています。今の設定を、ファイルの設定に置き換えますか？\nAPIキーは入っていないので、今のものがそのまま使われます。\n「キャンセル」なら設定は今のまま、チャットなどだけを読み込みます。')) {
       const st = data.settings;
       const keys = new Map(S.settings.connections.map((c) => [c.id, c.apiKey]));
@@ -1847,7 +1871,8 @@ async function importData(file) {
     }
     await loadAll();
     if (!$('#settings').hidden) renderSettings();
-    toast(`読み込みました（チャット ${data.chats?.length || 0} 件）`);
+    toast(`読み込みました（新しく追加 ${total.added}・更新 ${total.updated}${total.kept ? `・手元が新しいので残した ${total.kept}` : ''}）`);
+    if (total.kept) alert(`読み込みました。\n\n新しく追加：${total.added} 件\nファイルの内容で更新：${total.updated} 件\n手元のほうが新しいので残した：${total.kept} 件\n\n（件数は、チャット・メッセージ・プロンプト・カードなどを1つずつ数えています）`);
   } catch (e) {
     alert(`読み込めませんでした。\n${e.message}`);
   }
@@ -2004,7 +2029,7 @@ function renderSettings() {
         h('button', { class: 'primary', text: 'ファイルに書き出す', onclick: exportData })),
       h('div', { class: 'card' },
         h('strong', { text: '読み込み' }),
-        h('p', { class: 'hint', text: '書き出したファイルを読み込みます。今あるチャットは消えず、追加されます。' }),
+        h('p', { class: 'hint', text: '書き出したファイルを読み込みます。今あるチャットは消えません。同じチャットやメッセージは、手元とファイルのうち新しく保存されたほうを残します。' }),
         h('button', { text: 'ファイルを選ぶ', onclick: () => picker.click() }), picker),
       h('div', { class: 'card' },
         h('strong', { text: 'キャッシュ削除・アプリを更新' }),
